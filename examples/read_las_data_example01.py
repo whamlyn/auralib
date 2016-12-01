@@ -16,7 +16,9 @@ import auralib as aura
 # Specify the path to an input SEG-Y file
 infile = r'C:\Users\whamlyn\Dropbox\data\Blackfoot\09-17.LAS'
 
+# Create the LASReader object
 lasbuf = aura.las.LASReader(infile)
+
 
 # All fields in the LAS file can be accessed as attributes of the LASReader 
 # object.  Each attribute will be a Python Struct where each key corresponds to
@@ -61,7 +63,14 @@ for key in lasbuf.curve_info:
     print('%s: %s' % (key, lasbuf.curve_info[key]))
 
 
-# Set log digits equal to variables for convenience
+# Well logs are just about the only type of data read from LAS files and 
+# converted to numeric arrays in the LASReader object.  Below are some examples
+# of how to access the log digits, do calculations on the logs, and plot them
+# to a matplotlib figure.
+
+# Set log digits equal to variables for convenience (note that the log 
+# mnemonics may well be different in your LAS file).  Below we use mnemonics 
+# for Depth log='DEPTH', sonic log='DT', and density log='RHOB'.
 depth = lasbuf.curves['DEPTH']
 psonic = lasbuf.curves['DT']
 density = lasbuf.curves['RHOB'] * 0.001 # convert to g/cc
@@ -69,10 +78,11 @@ density = lasbuf.curves['RHOB'] * 0.001 # convert to g/cc
 # convert p-wave sonic to p-wave velocity
 vp = 1000.0/psonic # Vp will be in km/s
 
-# compute p-wave impedance from velocity and density
+# compute p-wave impedance from velocity and density logs
 pimpedance = vp * density
 
-# plot logs
+
+# All plotting code below here...
 fig = plt.figure(num=1)
 fig.clf()
 
