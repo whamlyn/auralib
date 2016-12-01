@@ -4,10 +4,25 @@ AuraQI module to define various types of wavelets.
 Author:   Wes Hamlyn
 Created:   3-Jan-2016
 Last Mod: 17-Aug-2016
+
+Copyright 2016 Wes Hamlyn
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 import numpy as np
 from scipy import signal
+import auralib as aura
 
 
 def ricker(cfreq, phase, dt, wvlt_length):
@@ -23,13 +38,19 @@ def ricker(cfreq, phase, dt, wvlt_length):
     dt: sample rate in seconds
     wvlt_length: length of wavelet in seconds
     """
-
-    t_max = wvlt_length*0.5
-    t_min = -t_max
+    cfreq = float(cfreq)
+    phase = float(phase)
+    dt = float(dt)
+    wvlt_length = float(wvlt_length)
     
-    t = np.arange(t_min, t_max, dt)
+    if aura.utils.iseven(wvlt_length/dt):
+        wvlt_length += dt
+        
+    nsamp = wvlt_length/dt
+    t_max = wvlt_length*0.5    
+    t = np.linspace(-t_max, t_max, nsamp)
     
-    t = np.linspace(-wvlt_length/2, (wvlt_length-dt)/2, wvlt_length/dt)
+    #t = np.linspace(-wvlt_length/2, (wvlt_length-dt)/2, wvlt_length/dt)
     wvlt = (1.0 - 2.0*(np.pi**2)*(cfreq**2)*(t**2)) * np.exp(-(np.pi**2)*(cfreq**2)*(t**2))
     
     if phase != 0:

@@ -4,6 +4,20 @@ AuraQI module containing Rock physics functions and related stuff...
 Author:   Wes Hamlyn
 Created:   3-Aug-2011
 Last Mod: 17-Aug-2016
+
+Copyright 2016 Wes Hamlyn
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 import math
@@ -131,6 +145,19 @@ def reuss_avg2(M, f):
     return avg
 
 
+
+def moduli_from_velrho(Vp, Vs, Rho):
+    """
+    Convenience function to compute bulk and shear moduli from 
+    Vp, Vp, and Rho values.
+    """
+    K = Rho*(Vp**2.0 - 4.0/3.0*Vs**2)
+    G = Rho*Vs**2.0
+    
+    return K, G
+    
+    
+
 def brie_mixing(Kliquid, Kgas, Sliquid, Sgas, brie_exp=3.0):
     """
     Brie mixing of liquid and gas phases for pore filling fluids
@@ -237,6 +264,31 @@ def gassmann_update_rho(Rho_sat, Rho_f1, Rho_f2):
     
     
     
+def calc_co2(P):
+    """
+    Calculate elastic properties of Carbon Dioxide at a given pressure
+    
+    Inputs:
+        P - Pressure in MPa
+    
+    Outputs:
+        K_co2 - Bulk Modulus of Carbon Dioxide
+        R_co2 - Density of Carbon Dioxide
+        
+    reference:
+    http://www.geoconvention.com/archives/2015/202_GC2015_Rock_physics_study_of_the_Nisku_aquifer.pdf
+    """
+    
+    K_co2 = 12.8*P - 131.0
+    R_co2 = 138.2*np.log(P-11.15) + 429
+    
+    print('Bulk modulus model only valid from 15 - 32 MPa')
+    print('Bulk density model only valid from 15 - 40 MPa')
+        
+    return K_co2, R_co2
+
+
+
 def bw_brine(S, T, P):
     """
     Batzle-Wang calculation for brine
@@ -456,11 +508,36 @@ def rho_minfrac(rho_min, frac):
     rho = np.sum( rho_min*frac )
     
     return rho
-    
-    
+
 
 
 def coord_num(phi):
+    """
+    Calculates coordination number value as a function of porosity using the 
+    relationship:
+    
+    n = 20.0 - 34.0*phi + 14.0*phi**2.0
+            
+    The above expression was copied from Avseth's QSI book, equation 2.7 on 
+    page 55.
+    
+    Usage:
+        n = coord_num(phi)
+    
+    Inputs:
+        phi = porosity (v/v)
+    
+    Output:
+        n = coordination number (number of grain-to-grain contacts)
+    """    
+    
+    n = 20.0 - 34.0*phi + 14.0*phi**2.0
+
+    return n
+
+
+
+def coord_num2(phi):
     """
     Calculates coordination number value as a function of porosity using the 
     relationship:
@@ -489,13 +566,13 @@ def coord_num(phi):
 
 
 
-def HM(K, G, phic, P, n=9.0, f=1.0):
+def hertz_mindlin(n, phic, K, G, P_eff):
     """
     Bulk and Shear modulus of dry rock framework from Hertz-Mindlin contact
     theory.
     
     Usage:
-        Khm, Ghm = HM(K, G, phic, P, n, f)
+        K_hm, G_hm = hertz_mindlin(K, G, phic, P, n, f)
     
     Inputs:
         K = bulk modulus of mineral comprising matrix (GPa)
@@ -503,7 +580,6 @@ def HM(K, G, phic, P, n=9.0, f=1.0):
         phic = critical porosity (v/v)
         P = confining pressure (MPa)
         n = coordination number
-        f = shear modulus correction factor (fraction, 1.0 = no slip)
     
     Outputs:
         Khm = bulk modulus of dry rock framework @ critical porosity
@@ -511,52 +587,50 @@ def HM(K, G, phic, P, n=9.0, f=1.0):
     """
     
     prat = (3.0*K - 2.0*G)/(2.0*(3.0*K + G))
-
-    a = n**2.0 * G**2.0 * P * (1.0 - phic)**2.0
-    b = 18.0 * np.pi**2.0 * (1.0 - prat**2.0)
-    Khm = (a/b)**(1.0/3.0)
     
-    c = (2.0 + 3.0*f - prat*(1.0 + 3.0*f))/(5.0*(2.0 - prat))
-    d = 3.0*n**2.0*(1.0 - phic)**2.0*G**2.0*P
-    e = 2.0*np.pi**2.0*(1.0 - prat)**2.0
-    Ghm = c*(d/e)**(1.0/3.0)
+    A = n**2.0 * (1.0-phic)**2.0 * G**2.0
+    B = 18.0*np.pi**2.0*(1.0-prat)**2.0
     
-    return Khm, Ghm
+    C = (5.0-4.0*prat)/(5.0*(2.0-prat))
+    D = 3*n**2.0*(1.0-phic)**2.0*G**2.0
+    E = 2.0*np.pi**2.0*(1.0-prat)**2.0
+    
+    K_hm = (A/B*P_eff)**(1.0/3.0)
+    G_hm = C*(D/E*P_eff)**(1.0/3.0)
+    
+    return K_hm, G_hm
     
     
-def softsand(K, G, Khm, Ghm, phi, phic):
+    
+def friable_sand(phi, phic, K_hm, G_hm, K_mat, G_mat):
     """
-    Soft Sand Model
-    
-    Usage:
-        Ksoft, Gsoft = rpm_softsand(K, G, Khm, Ghm, phi, phic)
+    Friable sand rock physics model.
     
     Inputs:
-        K = bulk modulus of mineral comprising matrix (GPa)
-        G = shear modulus of mineral comprising matrix (GPa)
-        phic = critical porosity (v/v)
-        P = confining pressure (MPa)
-        n = coordination number
-        f = shear modulus correction factor (fraction, 1.0 = no slip)
+        phi = porosity
+        phic = critical porosity
+        K_hm = Hertz-Mindlin bulk modulus
+        G_hm = Hertz_mindlin shear modulus
+        K_mat = bulk modulus of mineral matrix
+        G_mat = shear modulus of mineral matrix
     
     Outputs:
-        Khm = bulk modulus of dry rock framework @ critical porosity
-        Ghm = shear modulus of dry rock framework @ critical porosity
+        K_dry = dry rock bulk modulus of friable rock
+        G_dry = dry rock shear modulus of friable rock
     """
     
+    z = G_hm/6.0 * (9.0*K_hm+8.0*G_hm)/(K_hm+2.0*G_hm)
     
-    a = (phi/phic)/(Khm + 4.0/3.0*Ghm)
-    b = (1.0 - phi/phic)/(K + 4.0/3.0*Ghm)
+    A = (phi/phic)/(K_hm + 4.0/3.0*G_hm)
+    B = (1.0 - phi/phic)/(K_mat + 4.0/3.0*G_hm)
+    K_dry = (A+B)**-1 - 4.0/3.0*G_hm
     
-    Ksoft = (a + b)**(-1.0) - 4.0/3.0*Ghm
+    C = (phi/phic)/(G_hm+z)
+    D = (1.0-phi/phic)/(G_mat + z)
+    G_dry = (C+D)**-1 - z
     
-    Zhm = Ghm/6.0 * (9.0*Khm + 8.0*Ghm)/(Khm + 2.0*Ghm)
-    c = (phi/phic)/(Ghm + Zhm)
-    d = (1.0 - phi/phic)/(G + Zhm)
-    
-    Gsoft = (c + d)**(-1.0) - Zhm
-    
-    return Ksoft, Gsoft
+    return K_dry, G_dry
+
     
 
 def contact_cem(K, G, Kc, Gc, phi, phic, n, alpha_method=1):
