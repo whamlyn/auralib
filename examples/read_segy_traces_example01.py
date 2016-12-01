@@ -17,6 +17,19 @@ import auralib as aura
 infile = r'C:\Users\whamlyn\Dropbox\data\QSI\data\Project_data\cdps_line2.sgy'
 
 
+# Format code references for header 'fmt' keys:
+#
+#       8-bit integer = 'c'
+#      16-bit integer = 'h'
+#      32-bit integer = 'l'  (lowercase L)
+#          IEEE float = 'f'
+#           IBM float = 'ibm'
+# 
+# Endianness is automatically determined by auralib.segy.Segy(). But, you can
+# Force any format code read as big or little endian by prepending > or <.
+# For example, tp force big-ending IBM float format, set 'fmt':'>ibm'
+
+
 # Create a Struct containing the important binary header fields, byte 
 # positions, encoded formats, and number of bytes. Generally you should never 
 # need to edit this.
