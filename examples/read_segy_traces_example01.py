@@ -6,9 +6,13 @@ Written by: Wes Hamlyn
 Created:    1-Dec-2016
 """
 
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import numpy as np
 import auralib as aura
 
-#%%
+
 # Specify the path to an input SEG-Y file
 infile = r'C:\Users\whamlyn\Dropbox\data\QSI\data\Project_data\cdps_line2.sgy'
 
@@ -77,9 +81,6 @@ thead = segybuf.read_thead2(trc_number_start, trc_number_end)
 
 
 # Plotting example
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
 
 # get some parameters for min/max time and traces and amplitude range
 time_min = 0
