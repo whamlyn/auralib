@@ -4,6 +4,20 @@ AuraQI module for reading data stored in LAS format.
 Author:   Wes Hamlyn
 Created:  15-May-2015
 Last Mod: 17-Aug-2016
+
+Copyright 2016 Wes Hamlyn
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 import numpy as np
@@ -13,7 +27,7 @@ class LASReader(object):
     Python class for reading log data in LAS format.
     """
     
-    def __init__(self, filename, null_subs=np.nan):
+    def __init__(self, filename, null_subs=np.nan, max_lines=-1):
         """
         Constructor for LAS class
         """
@@ -36,6 +50,11 @@ class LASReader(object):
         self.num_lines = sum(1 for line in self.fd)
         self.fd.seek(0)
         
+        # allow user to read a maximum number of lines in an LAS file in case
+        # the files are massive and very slow to read
+        if max_lines > 0:
+            self.num_lines = max_lines
+            
         # start reading data line by line
         for i in range(0, self.num_lines):
             
@@ -223,10 +242,3 @@ class LASReader(object):
         for i in range(0, len(self.curve_names)):
             self.curves[self.curve_names[i]] = tmp[:,i]
 
-
-# test this script
-#infile = 'C:/PRESALES/Vermillion/PreparedData/WELLS/100021004511W500/100021004511W500_1000_MD_COMBINED_MERGED.las'
-#
-#from tkFileDialog import askopenfilename
-#filename = askopenfilename()
-#buf = LASReader2(filename)
