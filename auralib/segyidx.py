@@ -25,6 +25,8 @@ import numpy as np
 import auralib.segy as segy
 import os
 from struct import pack, unpack
+from time import time
+
 
 class SegyIndex(object):
     """
@@ -45,22 +47,22 @@ class SegyIndex(object):
         self.xl_num = -1
         
         if os.path.exists(self.idx_file):
-            self.read_index_headers()
+            self._read_index_headers()
         
             
-    def read_index_headers(self):
+    def _read_index_headers(self):
         
         with open(self.idx_file, 'rb') as fd:
             
             # read version string
             buf = fd.read(32)
             buf = unpack('32s', buf)[0]
-            self.vers_string = buf.strip('\x00')
+            self.vers_string = buf.strip('\x00'.encode())
             
             # read path to segy file
             buf = fd.read(1024)
             buf = unpack('1024s', buf)[0]
-            self.segyfile = buf.strip('\x00')
+            self.segyfile = buf.strip('\x00'.encode())
             
             # read min inline
             buf = fd.read(4)
@@ -79,7 +81,7 @@ class SegyIndex(object):
             self.xl_num = unpack('l', buf)[0]
 
     
-    def build_segy_index(self, segy_file, def_bhead, def_thead):
+    def build_segy_index(self, segy_file, def_thead):
         """
         Given a SEG-Y file and the auralib binary and trace header definitions
         build an index file.
@@ -88,33 +90,43 @@ class SegyIndex(object):
         self.segy_file = segy_file 
         
         #  Create the SEG-Y file object
-        buf = segy.Segy(self.segy_file, def_bhead, def_thead)
+        buf = segy.Segy(self.segy_file, def_thead)
 
         #  read defined headers from all SEG-Y traces
         trc_start = 0
         trc_stop = buf.num_traces
-        thead = buf.read_thead2(trc_start, trc_stop, verbose=1000)
+        thead = buf.read_thead_multi(trc_start, trc_stop, verbose=1000)
+        print('Finished reading SEG-Y headers.')
         
         #  build Python list of sequential trace numbers
         tnum = np.arange(0, buf.num_traces)
         tnum = tnum.tolist()
+        print('Finished building sequential trace numbers.')
         
-        #  assign trace header struct to lists for convenience
+        #  convert trace header dictionary to numpy arrays for convenience
+        print('Converting trace header lists to numpy arrays...')
+        tic = time()
         il = np.array(thead['il'])
         xl = np.array(thead['xl'])
+        toc = time() - tic
+        print('Done! (%e seconds)' % toc)
         
         #  get inline and crossline statistics
-        il_min = min(il)
-        il_max = max(il)
-        il_num = il_max - il_min + 1
+        print('Getting Inline and Crossline statistics...')
+        self.il_min = min(il)
+        self.il_max = max(il)
+        self.il_num = self.il_max - self.il_min + 1
         
-        xl_min = min(xl)
-        xl_max = max(xl)
-        xl_num = xl_max - xl_min + 1
+        self.xl_min = min(xl)
+        self.xl_max = max(xl)
+        self.xl_num = self.xl_max - self.xl_min + 1
+        print('Done!')
         
         #  This section of code calculates the trace number in the SEG-Y file 
         #  that each cdp begins at.  The number of traces in that cdp (fold) is
         #  also calculated.
+        
+        print('Starting the loops for calculating the fold in each CDP')
         
         fold_il = []
         fold_xl = []
@@ -122,9 +134,12 @@ class SegyIndex(object):
         cdp_start_trace = []
 
         for i in set(il):
+            print('Working on inline: %i of %i' % (i, self.il_max))
+            
             for x in set(xl):
                 
                 idx = np.nonzero( (il==i) & (xl==x) )[0]
+                
                 fold_il.append(i)
                 fold_xl.append(x)
                 fold_count.append(len(idx))
@@ -134,97 +149,238 @@ class SegyIndex(object):
                 else:
                     cdp_start_trace.append(-1)
         
-        for i in xrange(len(fold_il)):
-            print('IL: %d  XL: %d  SeqTr: %i  Fold: %i' % 
-                  (fold_il[i], fold_xl[i], cdp_start_trace[i], fold_count[i]) )
-            
+        
+        # Set to True to have detailed info printed to command line
+        if False:
+            for i in range(len(fold_il)):
+                print('IL: %d  XL: %d  SeqTr: %i  Fold: %i' % 
+                      (fold_il[i], fold_xl[i], cdp_start_trace[i], fold_count[i]) )
+        
+        print('Done with CDP fold calculations!')
+        
+        
         # This section of code writes the version 2 segy index file
         
         print('Writing segy index file...')
         with open(self.idx_file, 'wb') as fd:
             
             fd.seek(0)
-        
-            buf = pack('32s', 'AuraSegyIndex_v01               ')
+            
+            print('Writing version string')
+            buf = pack('32s', 'AuraSegyIndex_v01'.encode())
             fd.write(buf)
             
-            buf = pack('1024s', self.segy_file)
+            print('Writing segy file path')
+            buf = pack('1024s', self.segy_file.encode())
             fd.write(buf)
             
-            buf = pack('l', il_min)
+            buf = pack('l', self.il_min)
             fd.write(buf)
             
-            buf = pack('l', xl_min)
+            buf = pack('l', self.xl_min)
             fd.write(buf)
             
-            buf = pack('l', il_num)
+            buf = pack('l', self.il_num)
             fd.write(buf)
             
-            buf = pack('l', xl_num)
+            buf = pack('l', self.xl_num)
             fd.write(buf)
             
             counter = 0
-            for i in xrange( len(cdp_start_trace) ):
+            for i in range( len(cdp_start_trace) ):
                 counter += 1
-                if counter == 100:
+                if counter == 101:
                     print('Writing cdp %i of %i' %(i, len(cdp_start_trace)))
                     counter = 1
-                    
+                   
+                
                 buf = pack('ll', cdp_start_trace[i], fold_count[i])
                 fd.write(buf)
                 
         print('... DONE!')
+
+        
+    def build_segy_index_v2(self, segy_file, def_thead):
+        """
+        Given a SEG-Y file and the auralib binary and trace header definitions
+        build an index file.
+        
+        This method assumes data are sorted by inline and then crossline and 
+        just does a straight running count through the headers rather than 
+        using the np.nonzero() approach which is fairly slow on large arrays.
+        
+        This is still in development, needs to be finalized and tested -Wes
+        """
+        
+        self.segy_file = segy_file 
+        
+        #  Create the SEG-Y file object
+        buf = segy.Segy(self.segy_file, def_thead)
+
+        #  read defined headers from all SEG-Y traces
+        trc_start = 0
+        trc_stop = buf.num_traces
+        thead = buf.read_thead_multi(trc_start, trc_stop, verbose=1000)
+        print('Finished reading SEG-Y headers.')
+        
+        #  build Python list of sequential trace numbers
+        tnum = np.arange(0, buf.num_traces)
+        tnum = tnum.tolist()
+        print('Finished building sequential trace numbers.')
+        
+        #  convert trace header dictionary to numpy arrays for convenience
+        print('Converting trace header lists to numpy arrays...')
+        tic = time()
+        il = np.array(thead['il'])
+        xl = np.array(thead['xl'])
+        toc = time() - tic
+        print('Done! (%e seconds)' % toc)
+        
+        #  get inline and crossline statistics
+        print('Getting Inline and Crossline statistics...')
+        self.il_min = min(il)
+        self.il_max = max(il)
+        self.il_num = self.il_max - self.il_min + 1
+        
+        self.xl_min = min(xl)
+        self.xl_max = max(xl)
+        self.xl_num = self.xl_max - self.xl_min + 1
+        print('Done!')
+        
+        #  This section of code calculates the trace number in the SEG-Y file 
+        #  that each cdp begins at.  The number of traces in that cdp (fold) is
+        #  also calculated.
+        
+        print('Starting the loops for calculating the fold in each CDP')
+        
+        fold_il = []
+        fold_xl = []
+        fold_count = []
+        cdp_start_trace = []
+
+        
+        fold = 1
+        start_trace = 0
+        il_last = il[0]
+        xl_last = xl[0]
+        for i in range(1, buf.num_traces):
+            
+            il_cur = il[i]
+            xl_cur = xl[i]
+            
+            if (il_cur==il_last) & (xl_cur==xl_last):
+                fold += 1
+                
+            else:
+                cdp_start_trace.append(start_trace)
+                start_trace = i  # reset the starting trace to the current trace number
+                
+                fold_count.append(fold)
+                fold_il.append(il_last)
+                fold_xl.append(xl_last)
+                fold = 1
+                
+            il_last = il_cur
+            xl_last = xl_cur
+        
+        fold_count = np.array(fold_count)
+        fold_il = np.array(fold_il)
+        fold_xl = np.array(fold_xl)
+        cdp_start_trace = np.array(cdp_start_trace)
+        
+        fold_il2 = []
+        fold_xl2 = []
+        fold_count_2 = []
+        cdp_start_trace_2 = []
+        for i in set(fold_il):
+            for x in set(fold_xl):
+                idx = np.nonzero( (fold_il==i) & (fold_xl==x))[0]
+                if len(idx)==0:
+                    fold_count_2.append(0)
+                    cdp_start_trace_2.append(-1)
+                else:
+                    fold_count_2.append(fold_count[idx[0]])
+                    cdp_start_trace_2.append(cdp_start_trace[idx[0]])
+        
+        cdp_start_trace = cdp_start_trace_2
+        fold_count = fold_count_2
+        fold_il = fold_il2
+        fold_xl = fold_xl2
+        
+        print(fold_count)
+        
+        # Set to True to have detailed info printed to command line
+        if True:
+            for i in range(len(fold_il)):
+                print('IL: %d  XL: %d  SeqTr: %i  Fold: %i' % 
+                      (fold_il[i], fold_xl[i], cdp_start_trace[i], fold_count[i]) )
+        
+        print('Done with CDP fold calculations!')
+        
+        
+        # This section of code writes the version 2 segy index file
+        
+        print('Writing segy index file...')
+        with open(self.idx_file, 'wb') as fd:
+            
+            fd.seek(0)
+            
+            print('Writing version string')
+            buf = pack('32s', 'AuraSegyIndex_v01'.encode())
+            fd.write(buf)
+            
+            print('Writing segy file path')
+            buf = pack('1024s', self.segy_file.encode())
+            fd.write(buf)
+            
+            buf = pack('l', self.il_min)
+            fd.write(buf)
+            
+            buf = pack('l', self.xl_min)
+            fd.write(buf)
+            
+            buf = pack('l', self.il_num)
+            fd.write(buf)
+            
+            buf = pack('l', self.xl_num)
+            fd.write(buf)
+            
+            counter = 0
+            for i in range( len(cdp_start_trace) ):
+                counter += 1
+                if counter == 101:
+                    print('Writing cdp %i of %i' %(i, len(cdp_start_trace)))
+                    counter = 1
+                   
+                
+                buf = pack('ll', cdp_start_trace[i], fold_count[i])
+                fd.write(buf)
+                
+        print('... DONE!')
+
         
         
     def get_index_tnums(self, il, xl):
+        il_max = self.il_min + self.il_num
+        xl_max = self.il_min + self.il_num
         
-        with open(self.idx_file, 'rb') as fd:
-            # make sure cursor is at beginning of file
-            fd.seek(0)
+        if (il>=self.il_min) & (il<=il_max) & (xl>=self.xl_min) & (xl<=xl_max):
+            with open(self.idx_file, 'rb') as fd:
+                # make sure cursor is at beginning of file
+                fd.seek(0)
+                
+                # seek to the start trace index in the index file
+                offset = 32 + 1024 + 16 + (il-self.il_min)*self.xl_num*8 + (xl-self.xl_min)*8
+                fd.seek(offset)
+                
+                buf = fd.read(8)
+                buf = unpack('ll', buf)
+                cdp_start_trace = buf[0]
+                cdp_fold = buf[1]
             
-            # seek to the start trace index in the index file
-            offset = 32 + 1024 + 16 + (il-self.il_min)*self.xl_num*8 + (xl-self.xl_min)*8
-            fd.seek(offset)
-            
-            buf = fd.read(8)
-            buf = unpack('ll', buf)
-            cdp_start_trace = buf[0]
-            cdp_fold = buf[1]
-            
+        else:
+            cdp_start_trace = -1
+            cdp_fold = 0
+        
         return cdp_start_trace, cdp_fold
-    
-    
-    def get_trace_data(self, il, xl, def_bhead, def_thead):
-        
-        trace0, num_traces = self.get_index_tnums(il, xl)
-        
-        start_trace = trace0 - 1
-        
-        end_trace = start_trace + num_traces
-        print(self.segy_file)
-        buf = segy.Segy(self.segy_file, def_bhead, def_thead)
-        tdata = buf.read_multi_trace_data(start_trace, end_trace)
-        
-        return tdata
-        
-    
-    def get_trace_headers(self, il, xl, def_bhead, def_thead):
-        
-        with open(self.idx_file, 'rb') as fd:
-            # make sure cursor is at beginning of file
-            fd.seek(0)
-            
-            # read path to segy file
-            buf = fd.read(1024)
-            buf = unpack('1024s', buf)[0]
-            self.segyfile = buf.strip('\x00')
 
-        
-        trace0, num_traces = self.get_index_tnums(il, xl)
-        start_trace = trace0 - 1
-        end_trace = start_trace + num_traces
-
-        buf = segy.Segy(self.segy_file, def_bhead, def_thead)
-        thead = buf.read_thead2(start_trace, end_trace)
-        
-        return thead

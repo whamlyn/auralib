@@ -124,6 +124,7 @@ def sw_archie(res, phi, Rw, a=1.0, m=2.0, n=2.0):
 def sw_modsim(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
     """
     Calculate water saturation using the Modified Simandoux equation
+    
     res = measured formation resistivity (ohm*m)
     phi = effective porosity (v/v)
     vsh = shale volume (v/v)
@@ -150,9 +151,9 @@ def sw_modsim(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
 def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
     """
     Calculate density porosity
-    
+        
     Usage:
-        phi = dens_por(Rlog, Rmatrix=2.65, Rfluid=1.00)
+        phi = dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0)
     
     Inputs:
         Rlog = density log values (kg/m3)
@@ -161,6 +162,10 @@ def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
         
     Outputs:
         phi = porosity (v/v)
+    
+    Note:   Quartz = 2650 kg/m3
+           Calcite = 2710 kg/m3
+          Dolomite = 2870 kg/m3
     """
     
     phi = (Rlog - Rmatrix) / (Rfluid - Rmatrix)
@@ -265,7 +270,8 @@ def vsh_clavier(gr, sand_line, shale_line):
 
 def thomas_steiber_plot(ax, phi_s=0.35, phi_sh=0.04):
     '''
-    Plot a Thomas-Steiber tremplate on a Matplotlib axes.
+    Plot a Thomas-Steiber tremplate on a Matplotlib axes.  Porosity is assumed
+    to be Total Porosity.
     
     Usage thomase_steiber_plot(ax, phi_s=0.35, phi_sh=0.04)
     

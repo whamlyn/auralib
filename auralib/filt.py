@@ -21,16 +21,18 @@ limitations under the License.
 """
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def apply_filter(tdata, filt):
     """
     Convenience function to apply a frequency domain filter operator to time
-    series data (i.e. seismic traces).
+    series data (i.e. seismic traces).  Note that both filter and time-series
+    must have the same number of samples.
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    30-Nov-2016
-    Modified:   1-Dec-2016
+    Modified:   19-Sep-2017
     """
     
     tdataf = np.fft.fft(tdata)
@@ -60,11 +62,11 @@ def ormsby(f1, f2, f3, f4, dt, nsamp):
     dt: sample rate in seconds
     nsamp: length of filter in samples
     
-	TO DO:
+    TO DO:
 	1) Build cosine taper into low and high frequency filter ramps to avoid
 	   sharp edges at filter corners.
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    30-Nov-2016
     Modified:   1-Dec-2016
 	"""
@@ -77,12 +79,18 @@ def ormsby(f1, f2, f3, f4, dt, nsamp):
     nsamp = int(nsamp)
     
     # Calculate slope and y-int for low frequency ramp
-    M1 = 1/(f2-f1)
-    b1 = -M1*f1
+    if f1 == f2:
+        pass
+    else:
+        M1 = 1/(f2-f1)
+        b1 = -M1*f1
     
     # Calculate slope and y-int for high frequency ramp
-    M2 = -1/(f4-f3)
-    b2 = -M2*f4
+    if f3 == f4:
+        pass
+    else:
+        M2 = -1/(f4-f3)
+        b2 = -M2*f4
     
     # Initialize frequency and filter arrays
     freq = np.fft.fftfreq(nsamp, dt)
@@ -91,7 +99,10 @@ def ormsby(f1, f2, f3, f4, dt, nsamp):
     
     # Build low frequency filter ramp
     idx = np.nonzero((np.abs(freq)>=f1) & (np.abs(freq)<f2))
-    filt[idx] = M1*np.abs(freq)[idx]+b1
+    if f1 == f2:
+        filt[idx] = 0
+    else:
+        filt[idx] = M1*np.abs(freq)[idx]+b1
     
     # Build central filter flat
     idx = np.nonzero((np.abs(freq)>=f2) & (np.abs(freq)<=f3))
@@ -99,7 +110,10 @@ def ormsby(f1, f2, f3, f4, dt, nsamp):
     
     # Build high frequency filter ramp
     idx = np.nonzero((np.abs(freq)>f3) & (np.abs(freq)<=f4))
-    filt[idx] = M2*np.abs(freq)[idx]+b2
+    if f3 == f4:
+        filt[idx] = 0
+    else:
+        filt[idx] = M2*np.abs(freq)[idx]+b2
     
     # Un-shift the frequencies
     filt = np.fft.ifftshift(filt)
@@ -112,7 +126,7 @@ def butterworth_lp(nyq, nsamp, fc, n):
     fc = high corner frequency
     n = frequency rolloff (# of poles)
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
@@ -133,7 +147,7 @@ def butterworth_hp(nyq, nsamp, fc, n):
     fc = low corner frequency
     n = frequency rolloff (# of poles)
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
@@ -156,7 +170,7 @@ def butterworth_bp(nyq, nsamp, fc1, n1, fc2, n2):
     fc2 = high corner frequency
     n2  = high frequency rolloff (# of poles)
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
@@ -179,7 +193,7 @@ def phaserot(data, deg):
     """
     Apply phase rotation of n degrees to a 1D array
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    8-Dec-2015
     Modified:   8-Dec-2015
     """
@@ -195,14 +209,14 @@ def phaserot(data, deg):
     return data
 
 
-def ampspec(ax, tdata, dt, scale='amp'):
+def ampspec(tdata, dt, ax=-1, scale='amp', ls='k-', lw=1, label=None):
     """
     Convenience function for plotting amplitude, power, or dB spectrum 
     displays to an existing matplotlib axis.  Operates on 1D and 2D data arrays.
-	If using 2D arrays, first dimension must correspond to trace number, second
-	dimension must correspond to sample number on a trace.
-	
-	Written by: Wes Hamlyn
+    If using 2D arrays, first dimension must correspond to trace number, second
+    dimension must correspond to sample number on a trace.
+    
+    Written by: Wes Hamlyn
     Created:    30-Nov-2016
     Modified:   1-Dec-2016
     """
@@ -229,21 +243,32 @@ def ampspec(ax, tdata, dt, scale='amp'):
     flbl = np.fft.fftfreq(nsamp, dt)
     flbl = np.fft.fftshift(flbl)
     
+    if ax==-1:
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.set_title('Spectral Analysis Window')
+    
     if scale == 'amp':
-        hdl = ax.plot(flbl, aspec)
+        hdl = ax.plot(flbl, aspec, ls, lw=lw, label=label)
         ax.set_ylabel('Amplitude')
+    
+    if scale == 'logamp':
+        hdl = ax.semilogy(flbl, aspec, ls, lw=lw, label=label)
+        ax.set_ylabel('Amplitude')
+        ax.grid(True, which='minor', axis='y')
 
     elif scale == 'power':
-        hdl = ax.plot(flbl, pwrspec)
+        hdl = ax.plot(flbl, pwrspec, ls, lw=lw, label=label)
         ax.set_ylabel('Power')
     
     elif scale == 'db':
-        hdl = ax.plot(flbl, db)
+        hdl = ax.plot(flbl, db, ls, lw=lw, label=label)
         ax.set_ylabel('dB Down')
-        
-    ax.set_xlabel('Frequency (Hz)')
 
-    return hdl
+    ax.set_xlabel('Frequency (Hz)')
+    ax.set_xlim([0, 0.5/dt])
+    
+    return hdl, ax
 
 
 def fkspec(tdata, dx, dy):
@@ -283,7 +308,7 @@ def plot_fkspec(ax, aspec, dx, dy):
     """
     Plots the calculated FK Spectrum to a figure axis.
 	
-	Written by: Wes Hamlyn
+    Written by: Wes Hamlyn
     Created:    8-Dec-2015
     Modified:   8-Dec-2015
     """
@@ -308,7 +333,7 @@ def plot_fkspec(ax, aspec, dx, dy):
 def KLT(a):
     """
     Returns Karhunen Loeve Transform of the input and the transformation matrix 
-	and eigenvalues.
+    and eigenvalues.
 	
 	*** IN DEVELOPMENT ***
     

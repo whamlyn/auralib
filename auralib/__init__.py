@@ -21,9 +21,11 @@ limitations under the License.
 """
 
 from . import avo
+from . import cmaps
 from . import filt
 from . import las
 from . import pp
+from . import plot
 from . import proj
 from . import rokdoc
 from . import rp

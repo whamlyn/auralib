@@ -53,6 +53,13 @@ class Logs():
 
 
 class Log():
+    """
+    Class for regularly sampled (periodic) well log data.
+    self.data = log sample values 
+    self.units = unit string corresponding to log digits
+    self.ztype = depth reference type (MD, TVDkb, TVDss, TVDml, TWT
+                 OWT
+    """
     def __init__(self, data, units='', ztype='md', 
                  start=np.nan, stop=np.nan, step=np.nan):
         self.data = data
@@ -76,6 +83,7 @@ class TD():
         else:
             print('Time and depth arrays have different numbers of samples!')
 
+            
 class Markers():
     """
     Class for storing well marker data.  Very simple for the moment, need to

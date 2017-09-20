@@ -73,6 +73,7 @@ def Rpp_ar(vp1, vs1, rho1, vp2, vs2, rho2, theta1):
     
 def Rpp_wiggins(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
     '''
+    Wiggins' approximation to Zoeppritz PP reflectivity.
     theta1 in radians
     '''
     
@@ -108,6 +109,7 @@ def Rpp_wiggins(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
 
 def Rpp_sgf(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
     '''
+    Smith-Gidlow-Fattic approximation to Zoeppritz PP reflectivity.
     theta1 in radians
     '''
     
@@ -142,6 +144,7 @@ def Rpp_sgf(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
     
 def Rpp_shuey(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
     '''
+    Shuey approximation to Zoeppritz PP reflectivity.
     theta1 in radians
     '''
     

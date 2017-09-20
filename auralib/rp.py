@@ -146,7 +146,7 @@ def reuss_avg2(M, f):
 
 
 
-def moduli_from_velrho(Vp, Vs, Rho):
+def KG_from_velrho(Vp, Vs, Rho):
     """
     Convenience function to compute bulk and shear moduli from 
     Vp, Vp, and Rho values.
@@ -237,6 +237,12 @@ def gassmann_sat2dry(Ksat, Kmin, Kfl, phi):
     
     Kdry = a/b
     
+#    a = Kmin*Ksat/(Kmin-Ksat)
+#    b = Kfl/(phi*(Kmin-Kfl))
+#    c = 1 + Ksat/(Kmin-Ksat)
+#    
+#    Kdry = (a+b)/c
+    
     return Kdry
     
     
@@ -248,7 +254,7 @@ def gassmann_dry2sat(Kdry, Kmin, Kfl, phi):
     a = 1.0 - Kdry/Kmin
     b = phi/Kfl + (1.0-phi)/Kmin - Kdry/(Kmin**2.0)
     
-    Ksat = Kdry + a**2.0/b
+    Ksat = Kdry + (a**2.0)/b
     
     return Ksat
 
@@ -289,7 +295,7 @@ def calc_co2(P):
 
 
 
-def bw_brine(S, T, P):
+def bw_brine(S, T, P, gwr=0.0):
     """
     Batzle-Wang calculation for brine
     
@@ -300,6 +306,7 @@ def bw_brine(S, T, P):
         S = Salinity (PPM)
         T = Temperature in degrees celcius
         P = Pressure in Mpa
+        gwr = Gas Water Ratio (v/v)
     
     Outputs:
         Vbrine = Acoustic velocity in brine (m/s)
@@ -312,21 +319,21 @@ def bw_brine(S, T, P):
     P = float(P)
     
     # Calculate density of pure water
-    Rwater = 1 + 10**-6 * (-80*T - 3.3*T**2 + 0.00175*T**3 + 489*P - 2*T*P + \
-                0.016*(T**2)*P - 1.3*(10**-5)*(T**3)*P - 0.333*P**2 - 0.002*T*P**2)
+    Rwater = 1.0+(10**-6)*(-80.0*T-3.3*(T**2)+0.00175*(T**3)+489.0*P-2.0*T*P+ \
+                0.016*(T**2)*P-1.3*(10.0**-5.0)*(T**3.0)*P-0.333*P**2-0.002*T*P**2.0)
     
     # Calculate the density of brine
-    Rbrine = Rwater + S*(0.668 + 0.44*S + (10**-6) * (300*P - 2400*P*S + \
-                T*(80 + 3*T - 3300*S - 13*P + 47*P*S)))
+    Rbrine = Rwater+S*(0.668+0.44*S+(10.0**-6.0)*(300.0*P-2400.0*P*S+ \
+                T*(80.0+3.0*T-3300.0*S-13.0*P+47.0*P*S)))
     
-    Rbrine = Rbrine * 1000  # convert from g/cc to kg/m3
+    Rbrine = Rbrine * 1000.0  # convert from g/cc to kg/m3
     
     
     # Calculate acoustic velocity in pure water
-    w0 = [1402.85, 4.871, -0.04783, 1.487*10**-4, -2.197*10**-7]
-    w1 = [1.524, -0.0111, 2.747*10**-4, -6.503*10**-7, 7.987*10**-10]
-    w2 = [3.437*10**-3, 1.739*10**-4, -2.135*10**-6, -1.455*10**-8, 5.230*10**-11]
-    w3 = [-1.197*10**-5, -1.628*10**-6, 1.237*10**-8, 1.327*10**-10, -4.614*10**-13]
+    w0 = [1402.85, 4.871, -0.04783, 1.487e-4, -2.197e-7]
+    w1 = [1.524, -0.0111, 2.747e-4, -6.503e-7, 7.987e-10]
+    w2 = [3.437e-3, 1.739e-4, -2.135e-6, -1.455e-8, 5.230e-11]
+    w3 = [-1.197e-5, -1.628e-6, 1.237e-8, 1.327e-10, -4.614-13]
     W = [w0, w1, w2, w3]
     
     Vwater = 0.0
@@ -335,9 +342,20 @@ def bw_brine(S, T, P):
              Vwater += W[j][i]*T**i*P**j
     
     # Calculate acoustic velocity in brine
-    Vbrine = Vwater + S*(1170 - 9.6*T + 0.055*T**2 - 8.5*10**-5*T**3 + 2.6*P -\
-                0.0029*T*P - 0.0476*P**2) + S**1.5*(780 - 10*P + 0.16*P**2) - \
-                1820*S**2
+    Vbrine = Vwater+S*(1170.0-9.6*T+0.055*T**2-8.5e-5*T**3+2.6*P- \
+                0.0029*T*P-0.0476*P**2)+S**1.5*(780-10*P+0.16*P**2)-1820*S**2
+    
+    Kbrine = Rbrine*Vbrine**2.0
+    
+    # account for dissolved gas
+    if gwr > 0:
+        log10_Rg = math.log10(0.712*abs(T-76.71)**1.5+3676.0*P**0.64) - \
+                    4.0 - 7.786*S*(T+17.78)**-0.306
+        Rg = 10.0**log10_Rg
+        
+        Kg = Kbrine/(1.0+0.0494*Rg)
+        Kbrine = Kg
+        Vbrine = (Kbrine/Rbrine)**0.5        
     
     return Vbrine, Rbrine
 
@@ -369,18 +387,22 @@ def bw_gas(SG, T, P):
     Pr = P/(4.892-0.4048*SG)    # Pr = pseudopressure
     Tr = Ta/(94.72+170.75*SG)   # Tr = psuedotemperature
     
-    a = 0.03 + 0.00527*(3.5-Tr)**3
-    b = 0.642*Tr - 0.007*Tr**4 - 0.52
+    a = 0.03+0.00527*(3.5-Tr)**3
+    b = 0.642*Tr-0.007*Tr**4-0.52
     c = 0.109*(3.85-Tr)**2
-    d = math.exp(-(0.45+8*(0.56-1/Tr)**2)*(Pr**1.2)/Tr)
-    Z = a*Pr + b + c*d
+    d = math.exp(-(0.45+8*(0.56-1.0/Tr)**2)*(Pr**1.2)/Tr)
+    Z = a*Pr+b+c*d
     R = 8.31441
     Rgas = 28.8*SG*P/(Z*R*Ta)
     
-    gamma = 0.85 + 5.6/(Pr+2) + 27.1/(Pr+3.5)**2 - 8.7*math.exp(-0.65*(Pr + 1))
-    m = 1.2*(-1*(0.45+8*(0.56-1/Tr)**2)*(Pr**0.2)/Tr)
+    gamma = 0.85 + 5.6/(Pr+2) + 27.1/((Pr+3.5)**2) - 8.7*math.exp(-0.65*(Pr+1))
+    m = 1.2*(-1.0*(0.45+8*(0.56-1.0/Tr)**2)*(Pr**0.2)/Tr)
     f = c*d*m + a
-    Kgas = P*gamma/(1-(Pr/Z)*f)
+    Kgas = P*gamma/(1.0-Pr*f/Z) 
+    
+    Kgas = Kgas * 10**6  # convert from MPa to Pa (???)
+    Rgas = Rgas*1000 # convert from g/cc to kg/m3
+    
     Vgas = (Kgas/Rgas)**0.5
     
     return Vgas, Rgas
@@ -400,12 +422,15 @@ def bw_max_dissolved_gas(SG, API, T, P):
         API = Oil gravity in API units
         T = Temperature in degress celcius
         P = Pressure in MPa
+    
+    Output:
+        GOR_max (v/v)
     """
     
-    Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
-    GOR = Rg_max
+    Rg_max = 2.03*SG*(P*math.exp(0.02878*API-0.00377*T))**1.205
+    GOR_max = Rg_max
     
-    return GOR
+    return GOR_max
 
 
 
@@ -420,7 +445,7 @@ def bw_oil(SG, API, GOR, T, P):
         SG  = Specific gravity of gas (gas density/air density @ 1atm,
               15.6 celcius)
         API = Oil gravity in API units (-1=max dissolved gas)
-        GOR = Gas to Oil Ratio
+        GOR = Gas to Oil Ratio (-1 for max disolved gas)
         T   = Temperature in degrees celcius
         P   = Pressure in Mpa
     
@@ -441,7 +466,7 @@ def bw_oil(SG, API, GOR, T, P):
     
     # Calculate R0 from API.  R0 = g/cc
     R0 = 141.5/(API+131.5)
-    B0 = 0.972 + 0.00038*(2.4*GOR*(SG/R0)**0.5 + T + 1.78)**1.175
+    B0 = 0.972 + 0.00038*(2.4*GOR*(SG/R0)**0.5 + T + 17.8)**1.175
     
     #Calculate psuedodensity Rprime
     Rprime = (R0/B0)*(1.0 + 0.001*GOR)**-1.0
@@ -449,10 +474,16 @@ def bw_oil(SG, API, GOR, T, P):
     #Calculate density of oil with gas
     Rowg = (R0 + 0.0012*SG*GOR)/B0
     
-    #Correct for pressure and find actual density
-    Roil = Rowg + (0.00277*P - 1.71*10**(-7)*P)*(Rowg - 1.15)**2 + 3.49*10**(-4)*P
+    #Correct this density for pressure and find density Rp
+    Rp = Rowg + (0.00277*P - 1.71e-7*P**3)*(Rowg - 1.15)**2 + 3.49e-4*P
     
-    Voil = 2096*(Rprime/(2.6-Rprime))**0.5 - 3.7*T + 4.64*P + 0.0115*(4.12*(1.08/Rprime-1.0)**0.5 - 1.0)*T*P
+    #Apply temperature correction to obtain actual density
+    Roil = Rp / (0.972 + 3.81e-4*(80.0+17.78)**1.175)
+    
+    Roil = Roil * 1000  # convert to kg/m3
+    
+    Voil = 2096*(Rprime/(2.6-Rprime))**0.5 - 3.7*T + 4.64*P + \
+            0.0115*(4.12*(1.08/Rprime-1.0)**0.5 - 1.0)*T*P
     
     return Voil, Roil
 
@@ -734,9 +765,9 @@ def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2
         c33d, c44d = khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2=1.59)
         
     Inputs:
-        c33m = c33 mineral stiffness (Pa)
-        c44m = c44 mineral stiffness (Pa)
-        ves = vertical effective stress (Pa)
+        c33m = c33 mineral stiffness (GPa)
+        c44m = c44 mineral stiffness (GPa)
+        ves = vertical effective stress (MPa)
         phi = porosity (fraction)
         n0 = crack density at ves=0 (default=0.6)
         d = stress sensitivity parameter (default = 0.06)
@@ -745,9 +776,9 @@ def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2
         c2 = functions of Poisson's Ratio (given by Khadeeva & Vernik as 1.59)
         
     Outputs:
-        c33d = c33 mineral stiffness of unsaturated shale
-        c44d = c44 mineral stiffness of unsaturated shale
-    """    
+        c33d = c33 mineral stiffness of unsaturated shale (GPa)
+        c44d = c44 mineral stiffness of unsaturated shale (GPa)
+    """
     
     #  Khadeeva-Vernik Moduli
     c33d = c33m / (1 + P*phi + c1*n0*np.exp(-d*ves))
@@ -755,5 +786,146 @@ def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2
     
     return c33d, c44d
     
+
     
+def castagna_mudrock(Vp, B=0.8621, C=-1.1724):
+    """
+    Vs from Vp using Castagna's mudrock line.
+    """
+    
+    Vs = B*Vp + C
+    
+    return Vs
+
+    
+def gc_sandstone(Vp, B=0.80416, C=-0.85588):
+    """
+    Vs from Vp using Greenberg-Castagna sandstone coefficients.
+    
+    Vs = A*Vp**2.0 + B*Vp + C
+    """
+    
+    Vs = B*Vp + C
+    
+    return Vs
+
+
+def gc_shale(Vp, B=0.76969, C=-0.86735):
+    """
+    Vs from Vp using Greenberg-Castagna shale coefficients.
+    
+    Vs = A*Vp**2.0 + B*Vp + C
+    """
+    
+    Vs = B*Vp + C
+    
+    return Vs
+
+
+def gc_limestone(Vp, A=-0.05508, B=1.01677, C=-1.03049):
+    """
+    Vs from Vp using Greenberg-Castagna limestone coefficients.
+    
+    Vs = A*Vp**2.0 + B*Vp + C
+    """
+    
+    Vs = A*Vp**2 + Vp*B + C
+    
+    return Vs
+
+
+def gc_dolomite(Vp, B=0.58321, C=-0.07775):
+    """
+    Vs from Vp using Greenberg-Castagna dolomite coefficients.
+    
+    Vs = A*Vp**2.0 + B*Vp + C
+    """
+    
+    Vs = B*Vp + C
+    
+    return Vs
+
+
+def murphy_simm_quartz(Vp, B=0.8029, C=-0.7509):
+    """
+    Vs from Vp using the Murphy-Simm quartz relationship.  Very similar to the
+    Greenberg-Castagna sandstone line but often fits very clean high porosity 
+    sandstone a bit better (from RokDoc Help documents).
+    
+    Vs = A*Vp**2.0 + B*Vp + C
+    """
+    
+    Vs = B*Vp + C
+    
+    return Vs
+
+
+def unconsolidated_sand_line(Vs):
+    """
+    Vp from Vs using the unconsolidated sand line.  Very similar to Greenberg-
+    Castagna sandstone line but returns a smaller Vs to account for lack of
+    consolidation.  Not the same as friable sand model (from RokDoc Help 
+    documents; coefficients from Rob Simm).
+    """
+    
+    a = 2.3311
+    b = -0.2886
+    c = 6.05
+    d = 4.09
+    
+    g = a + b*Vs
+    Vp = 2**g + Vs**g *(c**g - 2**g)/(d**g)
+    Vp = Vp**(1.0/g)
+    
+    return Vp
+
+    
+def han(phi, Vclay, Peff=20.0):
+    """
+    Vp and Vs relationhips using Han's empirical relations.
+    
+    Vp = A + B*phi + C*Vclay
+    
+    Either one of phi or Vclay may be an array, the other must be a constant.
+    """
+    
+    
+    #  Han fit coefficients for water saturated shaley sandstones
+    Vp_coef = {}
+    Vp_coef['5']  = [5.26, -7.08, -2.02]
+    Vp_coef['10'] = [5.39, -7.08, -2.13]
+    Vp_coef['20'] = [5.49, -6.94, -2.17]
+    Vp_coef['30'] = [5.55, -6.96, -2.18]
+    Vp_coef['40'] = [5.59, -6.93, -2.18]
+    
+    Vs_coef = {}
+    Vs_coef['5']  = [3.16, -4.77, -1.64]
+    Vs_coef['10'] = [3.29, -4.73, -1.74]
+    Vs_coef['20'] = [3.39, -4.73, -1.81]
+    Vs_coef['30'] = [3.47, -4.84, -1.87]
+    Vs_coef['40'] = [3.52, -4.91, -1.89]
+    
+    # Round the Peff value to an integer and convert to string
+    Peff = str(round(Peff))
+    
+    # Test to make sure the Peff specified corresponds to one of Han's
+    # measured pressure scenarios
+    if Peff not in Vp_coef.keys():
+        print('Effective pressure must be one of 5 MPa, 10 MPa, 20 MPa, 30 MPa, or 40 MPa.')
+        print('Please specify a new effective pressure.')
+        print('Aborting Han calculation...')
+    
+    else:
+        A1 = Vp_coef[Peff][0]
+        B1 = Vp_coef[Peff][1]
+        C1 = Vp_coef[Peff][2]
+        
+        A2 = Vs_coef[Peff][0]
+        B2 = Vs_coef[Peff][1]
+        C2 = Vs_coef[Peff][2]
+        
+        Vp = A1 + B1*phi + C1*Vclay
+        Vs = A2 + B2*phi + C2*Vclay
+    
+        return Vp, Vs
     

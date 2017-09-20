@@ -92,14 +92,14 @@ def inpoly(datax, datay, polyx, polyy):
     polyy = np.hstack([polyy, polyy[0]])
     
     idx = []
-    for i in xrange(0, len(datax)):
+    for i in range(0, len(datax)):
         count = 0
         
         if (datax[i] <= p_xmin) | (datax[i] >= p_xmax) | \
            (datay[i] <= p_ymin) | (datay[i] >= p_ymax):
             next
                 
-        for j in xrange(0, nvert):
+        for j in range(0, nvert):
             val = (polyx[j+1]-polyx[j]) * (datay[i]-polyy[j]) / \
                     (polyy[j+1]-polyy[j]) + polyx[j]
             if ((polyy[j] > datay[i]) != (polyy[j+1] > datay[i])) & \
@@ -150,3 +150,37 @@ def get_dist(ax):
     #plt.draw()
     
     return x1, x2, y1, y2, dist
+
+
+def nextpow2(value):
+    """
+    Returns the next power of 2 larger than value.
+    """
+    
+    npow2 = 1<<(value-1).bit_length()
+    
+    return npow2
+
+
+def padzeros(data, pad_length):
+    """
+    Pads a 1D data array with zeros, typically for input to FFT.
+    
+    data = input data vector
+    pad_length = desired output length
+    
+    data_pad = data vector padded with zeros
+    pad_start = number of samples added to beginning of vector
+    pad_end = number of samples added to end of vector
+    """
+    
+    nsamp = len(data)
+    padding = pad_length - nsamp
+    
+    pad_start = int(np.floor(padding*0.5))
+    pad_end = int(np.ceil(padding*0.5))
+
+    data_pad = np.pad(data, [pad_start, pad_end], 
+                     mode='linear_ramp', end_values=0)
+    
+    return data_pad, pad_start, pad_end

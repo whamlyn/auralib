@@ -66,7 +66,8 @@ def load_2d_pdf(infile):
     
     for i in range(0, 11):
         buf = fd1.readline()
-        
+        if i == 0:
+            name = buf.split('"')[1].strip()
         if i == 2:
             xattr = buf.split(':')[-1].strip()
     
@@ -97,6 +98,7 @@ def load_2d_pdf(infile):
     data = np.flipud(data)
     
     pdf = {}
+    pdf['name'] = name
     pdf['xattr'] = xattr
     pdf['xmin'] = xmin
     pdf['dx'] = dx
@@ -110,7 +112,7 @@ def load_2d_pdf(infile):
     return pdf
 
 
-def plot_2d_pdf(ax, pdf, linecolor='b'):
+def plot_2d_pdf(ax, pdf, cont_inc=-1, color='b'):
     """
     Need to use mplot3d axes.  Make sure to import this using the following
     syntax:
@@ -124,8 +126,10 @@ def plot_2d_pdf(ax, pdf, linecolor='b'):
     
     import numpy as np
     import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
     #from mayavi import mlab
     
+    name = pdf['name']
     xattr = pdf['xattr']
     xmin = pdf['xmin']
     dx = pdf['dx']
@@ -135,6 +139,9 @@ def plot_2d_pdf(ax, pdf, linecolor='b'):
     dy = pdf['dy']
     ny = pdf['ny']
     data = pdf['data']
+    
+    idx = np.nonzero(data<0)
+    data[idx] = np.nan
     
     #  Calculate max X and Y axis bin centres
     xmax = xmin + dx*nx
@@ -146,6 +153,19 @@ def plot_2d_pdf(ax, pdf, linecolor='b'):
     
     #  Build 2D arrays of bin centre coordinates for plotting
     X, Y = np.meshgrid(x, y)
-
-    im = ax.plot_surface(X, Y, data, cmap=plt.cm.rainbow, 
-                     shade=True, rstride=1, cstride=1)
+    
+    cont_max = np.nanmax(data)
+    if cont_inc == -1:
+        cont_inc = cont_max / 10.0
+    cont_min = cont_inc
+    
+    print('Contour Min: %f' % cont_min)
+    print('Contour Max: %f' % cont_max)
+    print('Contour Inc: %f' % cont_inc)
+    
+    levels = np.arange(cont_min, cont_max+cont_inc, cont_inc)
+    cs = ax.contour(X, Y, data, levels=levels, colors=color, linewidth=2.0)
+    cs.collections[0].set_label(name)
+    
+    ax.set_xlabel(xattr)
+    ax.set_ylabel(yattr)
