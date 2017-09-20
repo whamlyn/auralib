@@ -3,9 +3,9 @@ AuraQI module for reading data stored in SEG-Y format.
 
 Author:   Wes Hamlyn
 Created:   1-Sep-2014
-Last Mod:  1-Dec-2016
+Last Mod:  9-Mar-2017
 
-Copyright 2016 Wes Hamlyn
+Copyright 2017 Wes Hamlyn
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -44,10 +44,9 @@ def_thead = {'il':{'bpos':189,  'fmt':'l', 'nbyte':4},
              'xl':{'bpos':193, 'fmt':'l', 'nbyte':4},
              'cmpx':{'bpos':181, 'fmt':'l', 'nbyte':4},
              'cmpy':{'bpos':185, 'fmt':'l', 'nbyte':4},
-             'offset':{'bpos':37, 'fmt':'l', 'nbyte':4}
+             'offset':{'bpos':37, 'fmt':'l', 'nbyte':4},
+             'idcode':{'bpos':29, 'fmt':'h', 'nbyte':2}
              }
-
-
 
 
 class Segy(object):
@@ -55,7 +54,7 @@ class Segy(object):
     Python class for SEG-Y file manipulation
     """
 
-    def __init__(self, filename, def_bhead=def_bhead, def_thead=def_thead):
+    def __init__(self, filename, def_thead=def_thead, def_bhead=def_bhead):
         """
         Constructor for SEG-Y class.
         """
@@ -84,7 +83,6 @@ class Segy(object):
         self.num_traces = (self.filesize-3600)//self.trace_size
 
 
-
     def _get_ebcdic_head(self):
         """
         Read EBCDIC header and convert to ASCII.
@@ -106,7 +104,6 @@ class Segy(object):
         self.ebcdic = ebhead
         
         
-        
     def _get_bhead(self):
         """
         Read binary header fields.
@@ -124,7 +121,6 @@ class Segy(object):
         fd.close()
 
 
-
     def _calc_numbytes(self):
         """
         Calculate the number of bytes for each sample for a given sample format.
@@ -132,7 +128,7 @@ class Segy(object):
 
         fmt_code = self.bhead['samp_fmt']
 
-        if fmt_code == 1:
+        if (fmt_code == 1) | (fmt_code == 6):
             self.fmt_str = 'ibm'
             self.numbytes = 4
 
@@ -157,7 +153,6 @@ class Segy(object):
 
         elif self.endian == 'little':
             self.fmt_str = '<' + self.fmt_str
-
 
 
     def _calc_endian(self):
@@ -201,8 +196,7 @@ class Segy(object):
                     self.def_thead[key]['fmt'] = '>' + self.def_thead[key]['fmt']        
         
 
-
-    def get_ilxl(self, il0, xl0):
+    def get_ilxl(self, il0, xl0, multi=-1):
         """
         Find an inline and crossline number in a segy file using a simple
         binary search.
@@ -220,11 +214,11 @@ class Segy(object):
         
         count = 0
         ilxlg = -1
-        while (ilxl0 != ilxlg) & (count<50):
+        while (ilxl0 != ilxlg) & (count<100):
             count += 1
             #print('iteration %i' % count)
             
-            self.read_thead1(tg)
+            self.read_thead(tg)
             ilg = self.thead['il'][0]
             xlg = self.thead['xl'][0]
             ilxlg = ilg*mult10 + xlg
@@ -241,12 +235,29 @@ class Segy(object):
             elif ilxlg < ilxl0:
                 tmin = tg*1
                 tg = int(round((tmax + tmin)/2))
+        
+        if multi>0:
+            # Search a number of traces around the "tg" trace to return
+            # the trace numbers of the multi-traces
+            print('Using multi search...')
+            
+            tnum_start = tg-multi
+            tnum_end = tg+multi
+            tnums = np.arange(tnum_start, tnum_end, 1)
+            
+            self.read_thead_multi(tnum_start, tnum_end)
+            ilg = np.array(self.thead['il'], dtype='int64')
+            xlg = np.array(self.thead['xl'], dtype='int64')
+            ilxlg = ilg*mult10 + xlg
+            
+            idx = np.nonzero(ilxl0==ilxlg)[0]
+            tg = tnums[idx]
+            tg = tg.tolist()
             
         return tg
 
     
-    
-    def read_trace_data(self, tracenum):
+    def read_tdata(self, tracenum):
         """
         Read a single trace from a SEG-Y file.
         Note:
@@ -258,122 +269,58 @@ class Segy(object):
 
         fd = open(self.filename, 'rb')
         fd.seek(bpos, 0)
-
-        tdata = []
-
+    
+        
         if self.fmt_str == '>ibm':
-            for i in range(0, self.bhead['num_samp']):
-                buf = fd.read(self.numbytes)
-                buf = self._ibm2ieee_b(buf)
-                tdata.append(buf)
-
-        elif self.fmt_str == '<ibm':
-            for i in range(0, self.bhead['num_samp']):
-                buf = fd.read(self.numbytes)
-                buf = self._ibm2ieee_l(buf)
-                tdata.append(buf)
-
-        else:
-            for i in range(0, self.bhead['num_samp']):
-                buf = fd.read(self.numbytes)
-                buf = unpack(self.fmt_str, buf)
-                tdata.append(buf[0])
-
-        fd.close()
-
-        return tdata
-
-    
-    
-    def read_multi_trace_data(self, tr_start, tr_end, verbose=0):
-        """
-        Read multiple sequential traces from a SEG-Y file.  This method is faster
-        		than read_trace_data() but is restricted to reading sequential traces.
-        Note:
-            tr_start is the first trace to be read
-            tr_end is the final trace to be read (inclusive)
-            This function starts at zero (e.g. first SEG-Y trace has tracenum = 0)
-        """            
-        
-        fd = open(self.filename, 'rb')
-        
-        tdata = []
-        count = 0
-        for tracenum in range(tr_start, tr_end):
-            
-            count += 1
-            if (verbose > 0) & (count == verbose+1):
-                print('reading trace %i' % (tracenum))
-                count = 1
-            
-            bpos = 3200 + 400 + 240 + self.trace_size * tracenum 
-            fd.seek(bpos, 0)
-            
-            tbuf = []
-            
-            if self.fmt_str == '>ibm':
-                for i in range(0, self.bhead['num_samp']):
-                    buf = fd.read(self.numbytes)
-                    buf = self._ibm2ieee_b(buf)
-                    tbuf.append(buf)
-        
-            elif self.fmt_str == '<ibm':
-                for i in range(0, self.bhead['num_samp']):
-                    buf = fd.read(self.numbytes)
-                    buf = self._ibm2ieee_l(buf)
-                    tbuf.append(buf)
-        
-            else:
-                for i in range(0, self.bhead['num_samp']):
-                    buf = fd.read(self.numbytes)
-                    buf = unpack(self.fmt_str, buf)
-                    tbuf.append(buf[0])
-            
-            tdata.append(tbuf)
-    
-        fd.close()
-        
-        return tdata
-    
-        
-    
-    def read_trace_data_new(self, tracenum):
-            """
-            Read a single trace from a SEG-Y file.
-            Note:
-                tracenum is the number of the trace in the SEG-Y file to be read.
-                This starts at zero (e.g. first SEG-Y trace has tracenum = 0)
-            """
-    
-            bpos = 3200 + 400 + 240 + self.trace_size * tracenum
-    
-            fd = open(self.filename, 'rb')
-            fd.seek(bpos, 0)
-    
-            tdata = []
-    
-            if self.fmt_str == '>ibm':
-                buf = fd.read(self.bhead['num_samp'])
-                tdata = self._ibm2ieee_b_new(buf)
-    
-            elif self.fmt_str == '<ibm':
-                buf = fd.read(self.bhead['num_samp'])
-                tdata = self._ibm2ieee_l_new(buf)
-    
-            else:
-                long_fmt_str = self.fmt_str[0]
-                for i in xrange(0, self.bhead['num_samp']):
-                    long_fmt_str  = long_fmt_str + self.fmt_str[1]
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
                 
-                buf = fd.read(self.bhead['num_samp'])
-                tdata = unpack(long_fmt_str, buf)
+                # move cursor to start of trace samples that you want to read
+                bpos = 3600 + 240 + self.trace_size*tracenum
+                fd.seek(bpos)
+                
+                # read all the samples for the trace
+                ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
+                tdata = self._ibm2ieee_b_new(ibm_float_trace)
+                
+                    
+        elif self.fmt_str == '<ibm':
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
+
+                # move cursor to start of trace samples that you want to read
+                bpos = 3600 + 240 + self.trace_size*tracenum
+                fd.seek(bpos)
+                
+                # read all the samples for the trace
+                ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
+                tdata = self._ibm2ieee_l_new(ibm_float_trace)
+                
+                    
+        else:
+            #  build format string
+            if self.endian == 'big':
+                tr_fmt_str = '>'
+            else:
+                tr_fmt_str = '<'
+            
+            for i in range(0, self.bhead['num_samp']):
+                tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
+                # move cursor to start of trace samples that you want to read
+                bpos = 3600 + 240 + self.trace_size*tracenum
+                fd.seek(bpos)
+                
+                # read all the samples for the trace
+                buf = fd.read(self.bhead['num_samp'] * self.numbytes)
+                tdata = unpack(tr_fmt_str, buf)
     
-            fd.close()
-    
-            return tdata
+        return tdata
     
     
-    def read_multi_trace_data_new(self, tr_start, tr_end, verbose=0):
+    def read_tdata_multi(self, tr_start, tr_end, verbose=0):
         """
         Read multiple sequential traces from a SEG-Y file.  This method is faster
     		than read_trace_data() but is restricted to reading sequential traces.
@@ -439,8 +386,9 @@ class Segy(object):
             else:
                 tr_fmt_str = '<'
             
-            for i in range(0, self.bhead['num_samp']):
-                tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            #for i in range(0, self.bhead['num_samp']):
+            #    tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            tr_fmt_str = '%s%i%s' % (self.fmt_str[0], self.bhead['num_samp'], self.fmt_str[1])
             
             # open file for binary read    
             with open(self.filename, 'rb') as fd:
@@ -467,41 +415,60 @@ class Segy(object):
         return tdata
     
 
-    def read_multi_trace_data_new2(self, tr_start, tr_end, verbose=0):
+    def read_tdata_random(self, traces, tmin=-1, tmax=-1, verbose=0):
         """
-        Read multiple sequential traces from a SEG-Y file.  This method is faster
-    		than read_trace_data() but is restricted to reading sequential traces.
+        Read multiple random traces from a SEG-Y file.  This method is faster
+    		than read_trace_data().
         Note:
-            - this is a development function that attempts to speed up the
-              unpacking step
             - tr_start is the first trace to be read (zero-indexed)
             - tr_end is the final trace to be read (inclusive)
             - This method starts at zero (e.g. first SEG-Y trace has 
               tracenum = 0)
-        """            
-        import io
+        """
+        
+        if tmin != -1:
+            samp_min = tmin / (self.bhead['samp_rate']*0.000001)
+            samp_min = int(np.round(samp_min))
+        else:
+            samp_min = 0
+        
+        if tmax != -1:
+            samp_max = tmax / (self.bhead['samp_rate']*0.000001)
+            samp_max = int(np.round(samp_max))
+        else:
+            samp_max = self.bhead['num_samp']
+        
+        if (tmin!=-1) | (tmax!=-1):
+            nsamp = samp_max - samp_min + 1
+        else:
+            nsamp = self.bhead['num_samp']
+        
+        # recast the array of trace numbers to int64, this seems to fix a
+        # problem when calculating starting byte locations where the start byte
+        # is greater than 2**32
+        traces = np.array(traces, dtype='int64')
         
         tdata = []
         count = 0
         if self.fmt_str == '>ibm':
             # open file for binary read    
-            with io.open(self.filename, 'rb') as fd:
+            with open(self.filename, 'rb') as fd:
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in traces:
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
                         print('reading trace %i' % (tracenum))
                         count = 1
                     
                     # move cursor to start of trace samples that you want to read
-                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    bpos = 3600 + 240 + self.trace_size*tracenum + samp_min*self.numbytes
                     fd.seek(bpos)
                     
                     # read all the samples for the trace
-                    ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
-                    buf1 = self._ibm2ieee_b_new(ibm_float_trace)
+                    ibm_float_trace = fd.read(nsamp*self.numbytes)
+                    buf1 = self._ibm2ieee_b_new(ibm_float_trace, nsamp)
                     
                     tdata.append(buf1)
                     
@@ -511,19 +478,19 @@ class Segy(object):
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in traces:
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
                         print('reading trace %i' % (tracenum))
                         count = 1
                     
                     # move cursor to start of trace samples that you want to read
-                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    bpos = 3600 + 240 + self.trace_size*tracenum + samp_min*self.numbytes
                     fd.seek(bpos)
                     
                     # read all the samples for the trace
-                    ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
-                    buf1 = self._ibm2ieee_l_new(ibm_float_trace)
+                    ibm_float_trace = fd.read(nsamp*self.numbytes)
+                    buf1 = self._ibm2ieee_l_new(ibm_float_trace, nsamp)
                     
                     tdata.append(buf1)
                     
@@ -534,15 +501,16 @@ class Segy(object):
             else:
                 tr_fmt_str = '<'
             
-            for i in range(0, self.bhead['num_samp']):
-                tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            #for i in range(0, self.bhead['num_samp']):
+            #    tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            tr_fmt_str = '%s%i%s' % (self.fmt_str[0], nsamp, self.fmt_str[1])
             
             # open file for binary read    
             with open(self.filename, 'rb') as fd:
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in traces:
                     
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
@@ -550,20 +518,19 @@ class Segy(object):
                         count = 1                    
     
                     # move cursor to start of trace samples that you want to read
-                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    bpos = 3600 + 240 + self.trace_size*tracenum + samp_min*self.numbytes
                     fd.seek(bpos)
                     
                     # read all the samples for the trace
-                    buf = fd.read(self.bhead['num_samp'] * self.numbytes)
+                    buf = fd.read(nsamp*self.numbytes)
                     buf1 = unpack(tr_fmt_str, buf)
                     
                     tdata.append(buf1)    
         
         return tdata
+       
     
-    
-    
-    def read_thead1(self, tracenum):
+    def read_thead(self, tracenum):
         """
         Read a single trace header from a SEG-Y file.
         Note:
@@ -606,7 +573,7 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead2(self,  tracenum1, tracenum2, verbose=0):
+    def read_thead_multi(self,  tracenum1, tracenum2, verbose=0):
         """
         Read trace headers from sequential traces in a SEG-Y file.
         Note:
@@ -627,7 +594,7 @@ class Segy(object):
             
             count = count + 1
             if (verbose > 0) & (count == verbose+1):
-                print('reading trace %i of %i' % (i, tracenum2-tracenum1))
+                print('reading trace %i of %i' % (i, tracenum2))
                 count = 1
             
             for key in self.def_thead.keys():
@@ -657,7 +624,7 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead2_new(self,  tracenum1, tracenum2, verbose=0):
+    def read_thead_multi_devtest(self,  tracenum1, tracenum2, verbose=0):
         """
         Read trace headers from sequential traces in a SEG-Y file.
         Note:
@@ -673,12 +640,13 @@ class Segy(object):
             self.thead.update({key:[]})
 
         fd = open(self.filename, 'rb')
+        
         count = 0
         for i in range(tracenum1, tracenum2):
             
             count = count + 1
             if (verbose > 0) & (count == verbose+1):
-                print('reading trace %i of %i' % (i, tracenum2-tracenum1))
+                print('reading trace %i of %i' % (i, tracenum2))
                 count = 1
             
             for key in self.def_thead.keys():
@@ -688,7 +656,7 @@ class Segy(object):
                 self.thead[key].append(buf[0])
 
         fd.close()
-		
+                
         for key in self.def_thead.keys():
             if self.def_thead[key]['fmt'] == '>ibm':
                 buf = self.thead[key]
@@ -701,18 +669,71 @@ class Segy(object):
                 self.thead[key].append(buf)
 
             else:
-                
                 buf = self.thead[key]
+                buf = b''.join(buf)
                 ntrc = len(buf)
                 fmt_str = '%s%i%s' % (self.def_thead[key]['fmt'][0], ntrc, self.def_thead[key]['fmt'][1:])
-                print(ntrc)
-                print(fmt_str)
-                buf = unpack(fmt_str, buf)
+                #print(ntrc)
+                #print(fmt_str)
+                buf = unpack(fmt_str,buf)
                 self.thead[key] = buf
 
         return self.thead
 
+        
+        
+    def read_thead_random(self,  traces, verbose=0):
+        """
+        Read trace headers from random traces in a SEG-Y file.
+        Note:
+            traces is a list of the trace numbers to be read.
+            Numbering starts at zero (e.g. first SEG-Y trace has tracenum = 0)
+            verbose is the trace increment to write info to the command line
+        """
 
+        #   Make sure the thead attribute is empty
+        self.thead = {}
+        for key in self.def_thead.keys():
+            self.thead.update({key:[]})
+
+        fd = open(self.filename, 'rb')
+        count = 0
+        master_count = 0
+        num_traces = len(traces)
+        for i in traces:
+            master_count += 1
+            count += 1
+            if (verbose > 0) & (count == verbose+1):
+                print('reading trace %i of %i' % (i, num_traces))
+                count = 1
+            
+            for key in self.def_thead.keys():
+
+                if self.def_thead[key]['fmt'] == '>ibm':
+                    bpos = 3599 + i*self.trace_size + self.def_thead[key]['bpos']
+                    fd.seek(bpos, 0)
+                    buf = fd.read(self.def_thead[key]['nbyte'])
+                    buf = self._ibm2ieee_b(buf)
+                    self.thead[key].append(buf)
+
+                elif self.def_thead[key]['fmt'] == '<ibm':
+                    bpos = 3599 + i*self.trace_size + self.def_thead[key]['bpos']
+                    fd.seek(bpos, 0)
+                    buf = fd.read(self.def_thead[key]['nbyte'])
+                    buf = self._ibm2ieee_l(buf)
+                    self.thead[key].append(buf)
+
+                else:
+                    bpos = 3599 + i*self.trace_size + self.def_thead[key]['bpos']
+                    fd.seek(bpos, 0)
+                    buf = unpack(self.def_thead[key]['fmt'], fd.read(self.def_thead[key]['nbyte']))
+                    self.thead[key].append(buf[0])
+
+        fd.close()
+
+        return self.thead
+
+        
     def write_ebcdic(self, ebcdic_text):
         """
         Writes a blank EBCDIC header
@@ -722,9 +743,8 @@ class Segy(object):
             buf = pack('c', ' ')
             fd.write(buf)
         fd.close()
-
-
-
+    
+    
     def write_bhead(self, def_bhead, bhead):
         """
         Writes a Binary header
@@ -750,9 +770,8 @@ class Segy(object):
             fd.write(buf)
 
         fd.close()
-
-
-
+    
+    
     def write_thead(self, tracenum, bpos, fmt, data):
         """
         Writes a Trace header
@@ -769,47 +788,80 @@ class Segy(object):
                 fmt = '>' + fmt
             elif self.endian == 'little':
                 fmt = '<' + 'fmt'
+        
+        with open(self.filename, 'rb+') as fd:
+            abs_bpos = 3600 + bpos-1 + tracenum*self.trace_size
+            fd.seek(abs_bpos, 0)
+            buf = pack(fmt, data)
+            fd.write(buf)
+            
+
+    def write_thead_multi(self, tracenums, bpos, fmt, data, verbose=-1):
+        """
+        Writes a Trace header
+
+        tracenums = list or array of trace numbers (zero indexed)
+        bpos = byte position in trace header to be written
+        fmt = f, l, h, c and > or <
+        data = list or array of header data corresponding to the traces in
+               the tracenum list (int, float, double)
+        """
+        
+        #  make sure the endian character is set in the format string
+        if fmt[0] not in  ['>', '<']:
+            if self.endian == 'big':
+                fmt = '>' + fmt
+            elif self.endian == 'little':
+                fmt = '<' + 'fmt'
+        
+        #  pack the list/array of data into bytes
+        fmt = fmt[0] + str(len(data)) + fmt[1:]
+        bbuf = pack(fmt, *data)
+        nbytes = int(len(bbuf)/len(data))
+        
+        with open(self.filename, 'rb+') as fd:
+            
+            count = 0
+            ntraces = len(tracenums)
+            for i in range(ntraces):
                 
-
-        fd = open(self.filename, 'rb+')
-
-        abs_bpos = 3600 + bpos-1 + tracenum*self.trace_size
-        fd.seek(abs_bpos, 0)
-        buf = pack(fmt, data)
-        fd.write(buf)
-
-        fd.close()
-
-
-
+                count += 1
+                if (verbose > 0) & (count == verbose+1):
+                    print('Writing trace header %i of %i' % (tracenums[i], tracenums[-1]))
+                    count = 1
+                    
+                abs_bpos = 3599 + tracenums[i]*self.trace_size + bpos
+                fd.seek(abs_bpos, 0)
+                b1 = nbytes*i
+                b2 = b1+nbytes
+                fd.write(bbuf[b1:b2])
+        
+    
     def write_trace(self, tracenum, data):
         """
         Writes trace data
 
         tracenum = trace number in file (zero indexed)
-        bpos = byte position in trace header to be written
-        fmt = f, l, h, c and > or <
         data = single value (int, float, double)
         """
 
-        fd = open(self.filename, 'rb+')
-
-        bpos = 3840 + tracenum*self.trace_size
-        fd.seek(bpos, 0)
-        
-        fmt_str = self.fmt_str[0]
-        for i in range(0, len(data)):
-            fmt_str = fmt_str + self.fmt_str[1]
-
-        buf = pack(self.fmt_str, data)
-        fd.write(buf)
-
-        fd.close()
-
-
+        with open(self.filename, 'rb+') as fd:
+            
+            bpos = 3840 + tracenum*self.trace_size
+            fd.seek(bpos, 0)
+            
+            nsamp = self.bhead['num_samp']
+            fmt_str = '%s%i%s' % (self.fmt_str[0], nsamp, self.fmt_str[1])
+            
+            buf = pack(fmt_str, *data)
+            fd.write(buf)
+    
+    
     def _ibm2ieee_b(self, ibm_float):
         """
         Convert IBM Float (big endian byte order)
+        Old method, works only on single floating point word.  New method will
+        operate faster on lists of floating point words.
         """
 
         dividend = float(16**6)
@@ -828,12 +880,13 @@ class Segy(object):
         mant = float(a<<16) + float(b<<8) + float(c)
 
         return sign*16**(istic - 64)*(mant/dividend)
-
-
-
+    
+    
     def _ibm2ieee_l(self, ibm_float):
         """
         Convert IBM float (little endian byte order)
+        Old method, works only on single floating point word.  New method will
+        operate faster on lists of floating point words.
         """
 
         dividend = float(16**6)
@@ -851,12 +904,13 @@ class Segy(object):
         mant = float(a<<16) + float(b<<8) + float(c)
         
         return sign*16**(istic - 64)*(mant/dividend)
-
-
-
-    def _ibm2ieee_b_new(self, ibm_float_trace):
+    
+    
+    def _ibm2ieee_b_new(self, ibm_float_trace, nsamp=-1):
         """
         Convert IBM Float (big endian byte order)
+        New method.  More efficient when operating on lists of floating point
+        words.
         """
         
         #  build trace format string
@@ -870,7 +924,10 @@ class Segy(object):
         #for i in range(0, self.bhead['num_samp']):
         #    fmt_str = fmt_str + 'BBBB'
         
-        fmt_str = '>%iB' % (self.bhead['num_samp']*4)
+        if nsamp == -1:
+            nsamp = self.bhead['num_samp']
+        
+        fmt_str = '>%iB' % (nsamp*4)
         
         buf = unpack(fmt_str, ibm_float_trace)
         
@@ -891,14 +948,16 @@ class Segy(object):
         # bit shifting, the other using multiplication
         #mant = a*2.0**16.0 + b*2.0**8.0 + c
         mant = np.left_shift(a, 16) + np.left_shift(b, 8) + c
-        buf = sign * (16**(istic-64))*(mant/dividend)
+        buf = sign * (16.0**(istic-64))*(mant/dividend)
         
         return buf.tolist()
-
-
-    def _ibm2ieee_l_new(self, ibm_float_trace):
+    
+    
+    def _ibm2ieee_l_new(self, ibm_float_trace, nsamp=-1):
         """
         Convert IBM Float (little endian byte order)
+        New method.  More efficient when operating on lists of floating point
+        words.
         """
         
         #  build trace format string
@@ -911,8 +970,11 @@ class Segy(object):
         #fmt_str = '<'
         #for i in range(0, self.bhead['num_samp']):
         #    fmt_str = fmt_str + 'BBBB'
-            
-        fmt_str = '<%iB' % (self.bhead['num_samp']*4)
+        
+        if nsamp == -1:
+            nsamp = self.bhead['num_samp']
+        
+        fmt_str = '<%iB' % (nsamp*4)
         buf = unpack(fmt_str, ibm_float_trace)
         
         buf = np.array(buf, dtype='int32')
@@ -932,28 +994,26 @@ class Segy(object):
         # bit shifting, the other using multiplication
         #mant = a*2.0**16.0 + b*2.0**8.0 + c
         mant = np.left_shift(a, 16) + np.left_shift(b, 8) + c
-        buf = sign * (16**(istic-64))*(mant/dividend)
+        buf = sign * (16.0**(istic-64))*(mant/dividend)
         
         return buf.tolist()
 
 
 
-        
-        
-
-def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, endian='big'):
+def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, 
+                          endian='big', verbose=500):
     """
     Writes a blank SEG-Y file with empty trace headers and zero sample 
-	amplitudes.  Minimal binary header values (sample format, number of 
-	samples, and sample rate) will be populated.
-	
-	filename = string containing full filename and path of output segy file
-	fmt_code = sample encoding for trace amplitude samples (1=ibm float, 
-	           2=32-bit int, 3=16-bit int, 5=ieee float, 8=8-bit int)
-	samp_rate = sample rate in microseconds (i.e. 2000 us = 2 ms)
-	num_samp = number of samples per trace
-	num_trace = number of traces in the segy file
-	endian = endian format ('big' for UNIX byte order; 'little' for PC byte order)
+    amplitudes.  Minimal binary header values (sample format, number of 
+    samples, and sample rate) will be populated.
+    
+    filename = string containing full filename and path of output segy file
+    fmt_code = sample encoding for trace amplitude samples (1=ibm float, 
+               2=32-bit int, 3=16-bit int, 5=ieee float, 8=8-bit int)
+    samp_rate = sample rate in microseconds (i.e. 2000 us = 2 ms)
+    num_samp = number of samples per trace
+    num_trace = number of traces in the segy file
+    endian = endian format ('big' for UNIX byte order; 'little' for PC byte order)
     """
     
     #   Set appropriate format string for writing data samples
@@ -973,12 +1033,10 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, en
     elif fmt_code == 8:
         fmt_str = 's'
 
-
     #   Build null EBCDIC header
     ehead = []
     for i in range(0, 3200):
         ehead.append(' ')
-
 
     #   Build minimal Binary header
     bhead = []
@@ -989,35 +1047,38 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, en
     bhead[10] = num_samp
     bhead[12] = fmt_code
 
-
     #   Build null Trace header
     thead = []
     for i in range(0, 120):
         thead.append(0)
     thead[14] = 1  # set dead trace flag 0=dead, 1=live
 
-
     #   Build null Trace data
     tdata = []
     for i in range(0, num_samp):
         tdata.append(0)
 
-
     #   Start writing to disk
-    with open(filename, 'wb') as fd:
+    with open(filename, 'w') as fd:
+        for buf in ehead:
+            fd.write(buf)
+            
+    with open(filename, 'ab') as fd:
         
         #   Do appropriate things for big endian
         if endian=='big':
-            
-            for buf in ehead:
-                fd.write(buf)
-    
             for buf in bhead:
                 fd.write(pack('>h', buf))
     
             fmt_str = '>' + fmt_str
             
+            count = 0
             for i in range(0, num_trace):
+                count += 1
+                if (verbose > 0) & (count == verbose+1):
+                    print('writing trace %i of %i' % (i, num_trace))
+                    count = 1
+                    
                 for buf in thead:
                     fd.write(pack('>h', buf))
                     
@@ -1026,14 +1087,15 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, en
     
         #   Do appropriate things for little endian
         if endian=='little':
-            
-            for buf in ehead:
-                fd.write(buf)
-    
             for buf in bhead:
                 fd.write(pack('<h', buf))
     
             for i in range(0, num_trace):
+                count += 1
+                if (verbose > 0) & (count == verbose+1):
+                    print('writing trace %i of %i' % (i, num_trace))
+                    count = 1
+                    
                 for buf in thead:
                     fd.write(pack('<h', buf))
     
@@ -1043,6 +1105,9 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace, en
 
 def plot_seis(ax, tdata, t_min=0, t_max=0, tr_min=0, tr_max=0, samp_rate=0.002,
               cmap=plt.cm.gray_r, amp_min=0, amp_max=0):
+    """
+    Convenience function for plotting seismic trace data to a maptlotlib axes.
+    """
     
     from matplotlib.ticker import FormatStrFormatter
     majorFormatter = FormatStrFormatter('%i')
@@ -1078,11 +1143,10 @@ def plot_seis(ax, tdata, t_min=0, t_max=0, tr_min=0, tr_max=0, samp_rate=0.002,
     return im
 
 
-
 def plot_wigva(ax, tdata, t, trcstart=1, excursion=1, peak=False, trough=False, 
           line=True, lcolor='k', pcolor=[0.2, 0.2, 1.0], tcolor=[1.0, 0.2, 0.2]):
     """
-    Python function to plot wiggle traces with variable area fill.
+    Plot wiggle traces with variable area fill.
     """
     
     from scipy.interpolate import interp1d
@@ -1124,7 +1188,6 @@ def plot_wigva(ax, tdata, t, trcstart=1, excursion=1, peak=False, trough=False,
             ax.plot(trc, t, lcolor)
         
     
-
 def time_to_samp(twt, dt):
     """
     Convert an array of TWT to an array of sample indicies
