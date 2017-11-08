@@ -862,6 +862,8 @@ class Segy(object):
         Convert IBM Float (big endian byte order)
         Old method, works only on single floating point word.  New method will
         operate faster on lists of floating point words.
+        
+        Based on, or directly derived from, a similar function from SegyPy.
         """
 
         dividend = float(16**6)
@@ -887,6 +889,8 @@ class Segy(object):
         Convert IBM float (little endian byte order)
         Old method, works only on single floating point word.  New method will
         operate faster on lists of floating point words.
+        
+        Based on, or directly derived from, a similar function from SegyPy.
         """
 
         dividend = float(16**6)
@@ -911,6 +915,8 @@ class Segy(object):
         Convert IBM Float (big endian byte order)
         New method.  More efficient when operating on lists of floating point
         words.
+        
+        Based on a similar function from SegyPy.
         """
         
         #  build trace format string
@@ -958,6 +964,8 @@ class Segy(object):
         Convert IBM Float (little endian byte order)
         New method.  More efficient when operating on lists of floating point
         words.
+        
+        Based on a similar function from SegyPy.
         """
         
         #  build trace format string
