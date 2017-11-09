@@ -30,7 +30,7 @@ infile = r'C:\Users\whamlyn\Dropbox\data\QSI\data\Project_data\cdps_line2.sgy'
 # For example, tp force big-ending IBM float format, set 'fmt':'>ibm'
 
 
-# Create a Struct containing the important binary header fields, byte 
+# Create a dictionary containing the important binary header fields, byte 
 # positions, encoded formats, and number of bytes. Generally you should never 
 # need to edit this.
 def_bhead = {'samp_rate':{'bpos':17, 'fmt':'h', 'nbyte':2},
@@ -38,7 +38,7 @@ def_bhead = {'samp_rate':{'bpos':17, 'fmt':'h', 'nbyte':2},
              'samp_fmt':{'bpos':25, 'fmt':'h', 'nbyte':2}
              }
 
-# Create a Struct containing the trace header fields, byte positiosn, encoding 
+# Create a dictionary containing the trace header fields, byte positiosn, encoding 
 # formats, and number of bytes. Generally you will always need to edit or 
 # re-define this for each SEG-Y file.  Note that the more header fields you 
 # define in this struct, the longer it will take to read from trace headers
@@ -53,7 +53,7 @@ def_thead = {'il':{'bpos':189,  'fmt':'l', 'nbyte':4},
 
 # Create an auralib Segy object.  Inputs required are the path to the input
 # SEG-Y file, and the structs defining the binary and trace header definitions
-segybuf = aura.segy.Segy(infile, def_bhead, def_thead)
+segybuf = aura.segy.Segy(infile, def_thead, def_bhead)
 
 
 # To view the ebcdic header, view the segybuf.ebcdic attribute
@@ -63,7 +63,7 @@ print(segybuf.ebcdic)
 
 # To read a single trace from the SEG-Y file.  Returns a python list.
 trc_number = 50
-tdata = segybuf.read_trace_data_new(trc_number)
+tdata = segybuf.read_tdata(trc_number)
 
 
 # To read multiple sequential traces (faster than reading one-by-one but
@@ -71,7 +71,7 @@ tdata = segybuf.read_trace_data_new(trc_number)
 # with indexing as follows:  tdata[trace_number][sample_number]
 trc_number_start = 50
 trc_number_end = 200
-tdata = segybuf.read_multi_trace_data_new(trc_number_start, trc_number_end)
+tdata = segybuf.read_tdata_multi(trc_number_start, trc_number_end)
 
 # Note that the "_new" versions of read_trace_data() and 
 # read_multi_trace_data() are still experimental. If they work, they will be 
@@ -88,8 +88,8 @@ tdata = segybuf.read_multi_trace_data_new(trc_number_start, trc_number_end)
 # faster to read multiple traces than read_thead1() but requires that the 
 # traces be sequential. Trace header data are returned as a Struct with keys 
 # corresponding to the def_thead key names.
-thead = segybuf.read_thead1(trc_number)
-thead = segybuf.read_thead2(trc_number_start, trc_number_end)
+thead = segybuf.read_thead(trc_number)
+thead = segybuf.read_thead_multi(trc_number_start, trc_number_end)
 
 
 
