@@ -196,7 +196,7 @@ class Segy(object):
                     self.def_thead[key]['fmt'] = '>' + self.def_thead[key]['fmt']        
         
 
-    def get_ilxl(self, il0, xl0, multi=-1):
+    def get_ilxl(self, il0, xl0, multi=-1, verbose=False):
         """
         Find an inline and crossline number in a segy file using a simple
         binary search.
@@ -204,7 +204,7 @@ class Segy(object):
         
         # create a composite inline-crossline number by scaling the inline 
         # number by a multiple of 10 and then adding the crossline number
-        mult10 = 100000
+        mult10 = 10000000
         ilxl0 = il0*mult10 + xl0
         
         # make an initial guess at a trace
@@ -223,10 +223,12 @@ class Segy(object):
             xlg = self.thead['xl'][0]
             ilxlg = ilg*mult10 + xlg
             
-            print('ilxl0: %i\tilxlg: %i tg: %i' % (ilxl0, ilxlg, tg))
+            if verbose:
+                print('ilxl0: %i\tilxlg: %i tg: %i' % (ilxl0, ilxlg, tg))
             
             if ilxlg == ilxl0:
-                print('---Success: IL: %i XL: %i Trace: %i' % (il0, xl0, tg))
+                if verbose:
+                    print('---Success: IL: %i XL: %i Trace: %i' % (il0, xl0, tg))
                 
             elif ilxlg > ilxl0:
                 tmax = tg*1
@@ -239,7 +241,8 @@ class Segy(object):
         if multi>0:
             # Search a number of traces around the "tg" trace to return
             # the trace numbers of the multi-traces
-            print('Using multi search...')
+            if verbose:
+                print('Using multi search...')
             
             tnum_start = tg-multi
             tnum_end = tg+multi
@@ -690,7 +693,12 @@ class Segy(object):
             Numbering starts at zero (e.g. first SEG-Y trace has tracenum = 0)
             verbose is the trace increment to write info to the command line
         """
-
+        
+        # recast the array of trace numbers to int64, this seems to fix a
+        # problem when calculating starting byte locations where the start byte
+        # is greater than 2**32
+        traces = np.array(traces, dtype='int64')
+        
         #   Make sure the thead attribute is empty
         self.thead = {}
         for key in self.def_thead.keys():
@@ -837,7 +845,7 @@ class Segy(object):
                 fd.write(bbuf[b1:b2])
         
     
-    def write_trace(self, tracenum, data):
+    def write_trace_data(self, tracenum, tdata):
         """
         Writes trace data
 
@@ -853,8 +861,32 @@ class Segy(object):
             nsamp = self.bhead['num_samp']
             fmt_str = '%s%i%s' % (self.fmt_str[0], nsamp, self.fmt_str[1])
             
-            buf = pack(fmt_str, *data)
+            buf = pack(fmt_str, *tdata)
             fd.write(buf)
+    
+    
+    def write_trace_data_multi(self, tracenums, tdata):
+        """
+        Writes trace data
+
+        tracenums = array of trace numbers in file corresponding to the tdata
+                    trace array (zero indexed)
+        tdata = 2d array (or list) containing traces to be written where axis 1
+                is the trace number and axis 2 is the sample number.
+        """
+        
+        nsamp = self.bhead['num_samp']
+        fmt_str = '%s%i%s' % (self.fmt_str[0], nsamp, self.fmt_str[1])
+        
+        with open(self.filename, 'rb+') as fd:
+            
+            for tracenum, data in zip(tracenums, tdata):
+                
+                bpos = 3840 + tracenum*self.trace_size
+                fd.seek(bpos, 0)
+                
+                buf = pack(fmt_str, *data)
+                fd.write(buf)
     
     
     def _ibm2ieee_b(self, ibm_float):
@@ -862,8 +894,6 @@ class Segy(object):
         Convert IBM Float (big endian byte order)
         Old method, works only on single floating point word.  New method will
         operate faster on lists of floating point words.
-        
-        Based on, or directly derived from, a similar function from SegyPy.
         """
 
         dividend = float(16**6)
@@ -889,8 +919,6 @@ class Segy(object):
         Convert IBM float (little endian byte order)
         Old method, works only on single floating point word.  New method will
         operate faster on lists of floating point words.
-        
-        Based on, or directly derived from, a similar function from SegyPy.
         """
 
         dividend = float(16**6)
@@ -915,8 +943,6 @@ class Segy(object):
         Convert IBM Float (big endian byte order)
         New method.  More efficient when operating on lists of floating point
         words.
-        
-        Based on a similar function from SegyPy.
         """
         
         #  build trace format string
@@ -964,8 +990,6 @@ class Segy(object):
         Convert IBM Float (little endian byte order)
         New method.  More efficient when operating on lists of floating point
         words.
-        
-        Based on a similar function from SegyPy.
         """
         
         #  build trace format string
@@ -1111,6 +1135,119 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace,
                     fd.write(pack(fmt_str, buf))
 
 
+def write_blank_segy_file_v2(filename, fmt_code, samp_rate, num_samp, num_trace, 
+                          endian='big', verbose=100):
+    """
+    Writes a blank SEG-Y file with empty trace headers and zero sample 
+    amplitudes.  Minimal binary header values (sample format, number of 
+    samples, and sample rate) will be populated.
+    
+    filename = string containing full filename and path of output segy file
+    fmt_code = sample encoding for trace amplitude samples (1=ibm float, 
+               2=32-bit int, 3=16-bit int, 5=ieee float, 8=8-bit int)
+    samp_rate = sample rate in microseconds (i.e. 2000 us = 2 ms)
+    num_samp = number of samples per trace
+    num_trace = number of traces in the segy file
+    endian = endian format ('big' for UNIX byte order; 'little' for PC byte order)
+    """
+    
+    #   Set appropriate format string for writing data samples
+    if fmt_code == 1:
+        fmt_str = 'ibm'
+        sys.exit('fmt_code = 1: IBM floating point not yet supported for SEG-Y write')
+        
+    elif fmt_code == 2:
+        fmt_str = '>l'
+
+    elif fmt_code == 3:
+        fmt_str = 'h'
+
+    elif fmt_code == 5:
+        fmt_str = 'f'
+
+    elif fmt_code == 8:
+        fmt_str = 's'
+    
+    #   Set appropriate endian format code
+    if endian == 'big':
+        fmt_str = '>' + fmt_str
+    else:
+        fmt_str = '<' + fmt_str
+
+    #   Build null EBCDIC header
+    ehead = []
+    for i in range(0, 3200):
+        ehead.append(' ')
+
+    #   Build minimal Binary header
+    bhead = []
+    for i in range(0, 200):
+        bhead.append(0)
+    
+    bhead[8] = samp_rate
+    bhead[10] = num_samp
+    bhead[12] = fmt_code
+
+    #   Build null Trace header
+    thead = []
+    for i in range(0, 120):
+        thead.append(0)
+    thead[14] = 1  # set dead trace flag; 1=live 2=dead
+
+    #   Build null Trace data
+    tdata = []
+    for i in range(0, num_samp):
+        tdata.append(0)
+
+    #   Start writing to disk
+    with open(filename, 'w') as fd:
+        for buf in ehead:
+            fd.write(buf)
+            
+    with open(filename, 'ab') as fd:
+        
+        #   Do appropriate things for big endian
+        if endian=='big':
+            for buf in bhead:
+                fd.write(pack('>h', buf))
+            
+            fmt_str = '%s%i%s' % (fmt_str[0], len(tdata), fmt_str[1])
+            tdatap = pack(fmt_str, *tdata)
+            
+            count = 0
+            for i in range(0, num_trace):
+                count += 1
+                if (verbose > 0) & (count == verbose+1):
+                    print('writing trace %i of %i' % (i, num_trace))
+                    count = 1
+                    
+                for buf in thead:
+                    fd.write(pack('>h', buf))
+                    
+                fd.write(tdatap)
+    
+        #   Do appropriate things for little endian
+        if endian=='little':
+            for buf in bhead:
+                fd.write(pack('<h', buf))
+            
+            fmt_str = '%s%i%s' % (fmt_str[0], len(tdata), fmt_str[1])
+            tdatap = pack(fmt_str, *tdata)
+            
+            count = 0
+            for i in range(0, num_trace):
+                count += 1
+                if (verbose > 0) & (count == verbose+1):
+                    print('writing trace %i of %i' % (i, num_trace))
+                    count = 1
+                    
+                for buf in thead:
+                    fd.write(pack('<h', buf))
+                
+                fd.write(tdatap)
+
+
+
 def plot_seis(ax, tdata, t_min=0, t_max=0, tr_min=0, tr_max=0, samp_rate=0.002,
               cmap=plt.cm.gray_r, amp_min=0, amp_max=0):
     """
@@ -1151,10 +1288,12 @@ def plot_seis(ax, tdata, t_min=0, t_max=0, tr_min=0, tr_max=0, samp_rate=0.002,
     return im
 
 
-def plot_wigva(ax, tdata, t, trcstart=1, excursion=1, peak=False, trough=False, 
-          line=True, lcolor='k', pcolor=[0.2, 0.2, 1.0], tcolor=[1.0, 0.2, 0.2]):
+def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
+          line=True, lw=0.25, lcolor='k', pcolor=[0.2, 0.2, 1.0],
+          tcolor=[1.0, 0.2, 0.2], alpha=0.5):
     """
     Plot wiggle traces with variable area fill.
+    If using matplotlib earlier than version 2.1.0, use this function.
     """
     
     from scipy.interpolate import interp1d
@@ -1164,36 +1303,85 @@ def plot_wigva(ax, tdata, t, trcstart=1, excursion=1, peak=False, trough=False,
     dt = int((t[1]-t[0])*1000)*0.001
     
     # set the new sample rate for the VA fill to 1/5 of the original sampling
-    dt2 = dt*0.2
+    # This is done so that 
+    dt2 = dt*0.25
     
     tdata = np.array(tdata)
     ntrc, nsamp = tdata.shape
     
-    norm = np.max(np.abs([np.max(tdata), np.min(tdata)]))
+    norm = np.max(np.abs([np.nanmax(tdata), np.nanmin(tdata)]))
     for i in range(0, ntrc):
         
         zeroval = i + trcstart
         trc = tdata[i, :]
-        #norm = max(abs([max(trc), min(trc)]))
-        trc = trc/norm * excursion + zeroval
         
-        if (peak == True) | (trough == True):
-            # interpolate the new trace
-            t2 = arange(t.min(), t.max(), dt2)
-            f = interp1d(t, trc, kind='linear')
-            trc2 = f(t2)
+        if np.isnan(trc).any():
+            next
+        
+        else:
+            #norm = max(abs([max(trc), min(trc)]))
+            trc = trc/norm * excursion + zeroval
             
-            # plot peak fill
-            if peak==True:
-                ax.fill_betweenx(t2, zeroval, trc2, where=trc2>=zeroval, 
-                                 facecolor=pcolor, edgecolor=pcolor)
+            if (peak == True) | (trough == True):
+                # interpolate the new trace
+                t2 = arange(t.min(), t.max(), dt2)
+                f = interp1d(t, trc, kind='linear')
+                trc2 = f(t2)
+                
+                # plot peak fill
+                if peak==True:
+                    ax.fill_betweenx(t2, zeroval, trc2, where=trc2>zeroval, 
+                                     facecolor=pcolor, edgecolor=pcolor,
+                                     alpha=alpha)
+                
+                # plot trough fill
+                if trough==True:
+                    ax.fill_betweenx(t2, zeroval, trc2, where=trc2<zeroval, 
+                                     facecolor=tcolor,  edgecolor=tcolor,
+                                     alpha=alpha)
+            if line == True:
+                ax.plot(trc, t, lcolor, lw=lw)
+
+
+def plot_wigva2(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
+          line=True, lw=0.25, lcolor='k', pcolor=[0.2, 0.2, 1.0],
+          tcolor=[1.0, 0.2, 0.2], alpha=0.5):
+    """
+    Plot wiggle traces with variable area fill. 
+    If using matplotlib version 2.1.0 and later, use this function.
+    """
+        
+    tdata = np.array(tdata)
+    ntrc, nsamp = tdata.shape
+    
+    norm = np.max(np.abs([np.nanmax(tdata), np.nanmin(tdata)]))
+    for i in range(0, ntrc):
+        
+        zeroval = i + trcstart
+        trc = tdata[i, :]
+        
+        if np.isnan(trc).any():
+            next
+        
+        else:
+            #norm = max(abs([max(trc), min(trc)]))
+            trc = trc/norm * excursion + zeroval
             
-            # plot trough fill
-            if trough==True:
-                ax.fill_betweenx(t2, zeroval, trc2, where=trc2<=zeroval, 
-                                 facecolor=tcolor,  edgecolor=tcolor)
-        if line == True:
-            ax.plot(trc, t, lcolor)
+            if (peak == True) | (trough == True):
+                                
+                # plot peak fill
+                if peak==True:
+                    ax.fill_betweenx(t, zeroval, trc, where=trc>zeroval, 
+                                     facecolor=pcolor, edgecolor=pcolor,
+                                     alpha=alpha, interpolate=True)
+                
+                # plot trough fill
+                if trough==True:
+                    ax.fill_betweenx(t, zeroval, trc, where=trc<zeroval, 
+                                     facecolor=tcolor,  edgecolor=tcolor,
+                                     alpha=alpha, interpolate=True)
+            if line == True:
+                ax.plot(trc, t, lcolor, lw=lw)
         
     
 def time_to_samp(twt, dt):
