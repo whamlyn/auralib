@@ -5,19 +5,6 @@ Author:   Wes Hamlyn
 Created:  16-Aug-2016
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
@@ -32,10 +19,10 @@ def d2t(depth, data, td_depth, td_twt, target_twt):
     resamples the log data to a regular sampling rate in time.
     """
     
-    f1 = interp1d(td_depth, td_twt, kind='linear')
+    f1 = interp1d(td_depth, td_twt, kind='linear', bounds_error=False, fill_value='extrapolate')
     twt_logstep = f1(depth)
         
-    f2 = interp1d(twt_logstep, data, kind='linear')
+    f2 = interp1d(twt_logstep, data, kind='linear', bounds_error=False, fill_value='extrapolate')
     data_twt = f2(target_twt)
     
     return data_twt
@@ -49,10 +36,10 @@ def t2d(twt, data, td_depth, td_twt, target_depth):
     resamples the log data to a regular sampling rate in depth.
     """
     
-    f1 = interp1d(td_twt, td_depth, kind='linear')
+    f1 = interp1d(td_twt, td_depth, kind='cubic', bounds_error=False, fill_value='extrapolate')
     depth_timestep = f1(twt)
         
-    f2 = interp1d(depth_timestep, data, kind='linear')
+    f2 = interp1d(depth_timestep, data, kind='cubic', bounds_error=False, fill_value='extrapolate')
     data_depth = f2(target_depth)
     
     return data_depth
@@ -86,7 +73,7 @@ def backus_length(f_dom, Vs0, mode=1):
         L = Lt
     
     return L
-        
+
 
 
 def backus_average(vp, vs, rho, nsamp):
@@ -169,8 +156,9 @@ def backus_average(vp, vs, rho, nsamp):
     rho_b = rho_b[pad_length:-pad_length]
     
     return Vpv_b, Vph_b, Vsv_b, Vsh_b, rho_b
-    
-    
+
+
+
 def plot_wigva(ax, tdata, t, baseline=0, peak=True, trough=True, 
           lcolor='k', pcolor=[0.2, 0.2, 1.0], tcolor=[1.0, 0.2, 0.2]):
     """
@@ -202,3 +190,5 @@ def plot_wigva(ax, tdata, t, baseline=0, peak=True, trough=True,
                                  alpha=0.6, facecolor=tcolor,  edgecolor=tcolor)
     
         ax.plot(trc2, t2, lcolor)
+
+

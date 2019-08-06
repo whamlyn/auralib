@@ -5,19 +5,6 @@ Author:   Wes Hamlyn
 Created:  25-Mar-2016
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
@@ -120,8 +107,31 @@ def sw_archie(res, phi, Rw, a=1.0, m=2.0, n=2.0):
     return Sw
     
 
+def sw_simandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
+    """
+    Calculate water saturation using the Modified Simandoux equation
+    
+    res = measured formation resistivity (ohm*m)
+    phi = effective porosity (v/v)
+    vsh = shale volume (v/v)
+    Rw = formation water resistivity (ohm*m)
+    Rsh = shale resistivity (ohm*m)
+    a, m, n = Archie constants
+    """
+    
+    A = (phi**m) / (a*Rw)
+    B = Vsh/Rsh
+    C = -1/res
+    
+    Sw = np.where(res>0, (-B + np.sqrt(B**2.0 - 4.0*A*C))/(2*A), 1.0)
+    
+    Sw[Sw < 0] = 0.0
+    Sw[Sw > 1] = 1.0
+    Sw[np.isnan(Sw)] = 1.0
+    return Sw
 
-def sw_modsim(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
+
+def sw_modsimandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     """
     Calculate water saturation using the Modified Simandoux equation
     
@@ -139,13 +149,35 @@ def sw_modsim(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
     B = Vsh/Rsh
     C = -1.0/res
     
-    Sw = (-B + np.sqrt(B**2.0 - 4.0*A*C))/(2*A)
+    Sw = np.where(A>0, (-B + np.sqrt(B**2.0 - 4.0*A*C))/(2*A), 1.0)
     
     Sw[Sw < 0] = 0.0
     Sw[Sw > 1] = 1.0
-    
+    Sw[np.isnan(Sw)] = 1.0
     return Sw
+
+
+def sw_indonesia(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
+    """
+    Calculate water saturation using the Indonesia equation
     
+    res = measured formation resistivity (ohm*m)
+    phi = effective porosity (v/v)
+    vsh = shale volume (v/v)
+    Rw = formation water resistivity (ohm*m)
+    Rsh = shale resistivity (ohm*m)
+    a, m, n = Archie constants
+    """
+    A = (1.0/res)**0.5
+    B = (Vsh**(1-0.5*Vsh)) / (Rsh**0.5)
+    C = ((phi**m)/(a*Rw))**0.5
+    
+    Sw = A / (B + C)
+    
+    Sw[Sw < 0] = 0.0
+    Sw[Sw > 1] = 1.0
+    Sw[np.isnan(Sw)] = 1.0
+    return Sw
 
 
 def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
@@ -170,6 +202,9 @@ def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
     
     phi = (Rlog - Rmatrix) / (Rfluid - Rmatrix)
     
+    phi[phi < 0.0] = 0.0
+    phi[phi > 1.0] = 1.0
+    
     return phi
 
 
@@ -187,7 +222,7 @@ def vsh_gr(gr, sand_line, shale_line):
     # clip values to range 0 - 1
     vsh_grindex[vsh_grindex > 1] = 1
     vsh_grindex[vsh_grindex < 0] = 0
-    
+        
     return vsh_grindex
 
 
@@ -263,10 +298,73 @@ def vsh_clavier(gr, sand_line, shale_line):
     # clip values to range 0 - 1
     vsh_clavier[vsh_clavier > 1] = 1
     vsh_clavier[vsh_clavier < 0] = 0
-    
+    vsh_clavier[np.isnan(vsh_clavier)] = 1
+        
     return vsh_clavier
     
  
+def TOC_rho_vernik(rho, phi_k=0.1, phi_nk=0.038, rho_k=1.3, rho_nk=2.765, 
+                   rho_hc=0.25, rho_w=1.05, Ck=80.0):
+    """
+    Vernik (2017) method of calculating TOC from bulk density. Solved Ch.6 Eq.10
+    for TOC to get the equation for TOC = ... below.
+    
+    density units: g/cc
+    porosity units: fraction
+    Ck unit: percentage
+    """
+    
+    rho_bk = rho_k - phi_k*(rho_k-rho_hc)
+    rho_bnk = rho_nk - phi_nk*(rho_nk-rho_w)
+    
+    A = Ck*rho_k*(phi_k*rho - phi_k*rho_bnk - rho + rho_bnk)
+    B = phi_k*rho*rho_k - phi_k*rho_bnk*rho_k - phi_nk*rho*rho_nk + \
+        phi_nk*rho_bk*rho_nk - rho*rho_k + rho*rho_nk - rho_bk*rho_nk + \
+        rho_bnk*rho_k
+        
+    TOC = A/B
+    
+    return TOC
+
+
+def TOC_schmoker1979(rho_b, A=157.0, B=58.1):
+    """
+    Schmoker (1979) method of TOC caluculation from bulk density to estimate 
+    TOC in devonian shales.
+    
+    bulk density units: g/cc
+    """
+    TOC = (A / rho_b) - B
+    return TOC
+
+
+def TOC_schmoker_and_hester1983(rho_b):
+    """
+    Refinement of Schmoker (1979) method of TOC caluculation from bulk density
+    for upper and lower shale members of Bakken Formation based on an organic
+    matter density of 1.01 g/cc, matrix density of 2.68 g/cc, and a ratio 
+    between weight percent of organic matter and organic carbon of 1.3.
+    
+    bulk density units: g/cc
+    """
+    TOC = (154.497 / rho_b) - 57.261    
+    return TOC
+
+
+def TOC_passey(resis, sonic, LOM=10.0, resisBaseline=10.0, sonicBaseline=65.0,
+               scalingFactor=0.05):
+    """
+    Passey method of TOC calculation
+    
+    resistivity units: ohm*meters
+    sonic units: ft/sec
+    """
+    
+    deltaLogR = np.log10(resis/resisBaseline) + scalingFactor*(sonic-sonicBaseline)
+    TOC = deltaLogR * 10.0**(2.3 - 0.15*LOM)
+    
+    return TOC
+
 
 def thomas_steiber_plot(ax, phi_s=0.35, phi_sh=0.04):
     '''

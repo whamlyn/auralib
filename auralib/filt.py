@@ -5,24 +5,14 @@ Author:   Wes Hamlyn
 Created:  3-Jan-2015
 Last Mod: 1-Dec-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
+from __future__ import absolute_import
 import numpy as np
 import matplotlib.pyplot as plt
-
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+#from ._utils import _maybe_get_pandas_wrapper
 
 def apply_filter(tdata, filt):
     """
@@ -120,7 +110,7 @@ def ormsby(f1, f2, f3, f4, dt, nsamp):
     
     return filt
 
-def butterworth_lp(nyq, nsamp, fc, n):
+def butterworth_lp(nyq, nsamp, fc, n, return_freq=False):
     """
     Low pass butterworth filter
     fc = high corner frequency
@@ -130,18 +120,26 @@ def butterworth_lp(nyq, nsamp, fc, n):
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
+    dt = 0.5/nyq
     
-    freq = np.linspace(-nyq, nyq, nsamp)
+    freq = np.fft.fftshift(np.fft.fftfreq(nsamp, dt))
     w = 2*np.pi*freq
     wc = 2*np.pi*fc
 
     filt = np.sqrt(1/(1+(w/wc)**(2.0*n)))
     
-    return filt, freq
+    # Un-shift the frequencies
+    filt = np.fft.ifftshift(filt)
+    freq = np.fft.ifftshift(freq)
+    
+    if return_freq:
+        return filt, freq
+    else:
+        return filt
     
     
     
-def butterworth_hp(nyq, nsamp, fc, n):
+def butterworth_hp(nyq, nsamp, fc, n, return_freq=False):
     """
     High pass butterworth filter
     fc = low corner frequency
@@ -151,18 +149,25 @@ def butterworth_hp(nyq, nsamp, fc, n):
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
+    dt = 0.5/nyq
     
-    freq = np.linspace(-nyq, nyq, nsamp)
+    freq = np.fft.fftshift(np.fft.fftfreq(nsamp, dt))
     w = 2*np.pi*freq
     wc = 2*np.pi*fc
     
     filt = np.sqrt(-1/(1 + (w/wc)**(2.0*n)) + 1)
     
-    return filt, freq
+    # Un-shift the frequencies
+    filt = np.fft.ifftshift(filt)
+    freq = np.fft.ifftshift(freq)
+    
+    if return_freq:
+        return filt, freq
+    else:
+        return filt
 
 
-
-def butterworth_bp(nyq, nsamp, fc1, n1, fc2, n2):
+def butterworth_bp(nyq, nsamp, fc1, n1, fc2, n2, return_freq=True):
     """
     Bandpass butterworth filter
     fc1 = low corner frequency
@@ -174,8 +179,9 @@ def butterworth_bp(nyq, nsamp, fc1, n1, fc2, n2):
     Created:    3-Jan-2015
     Modified:   1-Dec-2016
     """
+    dt = 0.5/nyq
     
-    freq = np.linspace(-nyq, nyq, nsamp)
+    freq = np.fft.fftshift(np.fft.fftfreq(nsamp, dt))
     w = 2*np.pi*freq
     
     wc1 = 2*np.pi*fc1
@@ -186,7 +192,14 @@ def butterworth_bp(nyq, nsamp, fc1, n1, fc2, n2):
     
     filt = filt_lp * filt_hp
     
-    return filt, freq
+    # Un-shift the frequencies
+    filt = np.fft.ifftshift(filt)
+    freq = np.fft.ifftshift(freq)
+
+    if return_freq:
+        return filt, freq
+    else:
+        return filt
 
     
 def phaserot(data, deg):
@@ -238,7 +251,7 @@ def ampspec(tdata, dt, ax=-1, scale='amp', ls='k-', lw=1, label=None):
         aspec = np.abs(tdataf)
     
     pwrspec = aspec ** 2.0
-    db = 10.0 * np.log10(pwrspec/np.max(pwrspec))
+    db = 20.0 * np.log10(aspec/np.max(aspec))
 
     flbl = np.fft.fftfreq(nsamp, dt)
     flbl = np.fft.fftshift(flbl)
@@ -359,10 +372,104 @@ def KLT(a):
     return klt, vec, val
     
     
+def hpfilter(X, lamb=20000):
+    """
+    Hodrick-Prescott filter
+    Copied verbatim from statsmodels package for convenience to use in auralib.
+    Edited to remove dependence on pandas (expect numpy array, WesH: Jan, 2019)
 
-    
-    
-    
+    Parameters
+    ----------
+    X : array-like
+        The 1d ndarray timeseries to filter of length (nobs,) or (nobs,1)
+    lamb : float
+        The Hodrick-Prescott smoothing parameter. A value of 1600 is
+        suggested for quarterly data. Ravn and Uhlig suggest using a value
+        of 6.25 (1600/4**4) for annual data and 129600 (1600*3**4) for monthly
+        data.
+
+    Returns
+    -------
+    cycle : array
+        The estimated cycle in the data given lamb.
+    trend : array
+        The estimated trend in the data given lamb.
+
+    Examples
+    ---------
+    >>> import statsmodels.api as sm
+    >>> import pandas as pd
+    >>> dta = sm.datasets.macrodata.load_pandas().data
+    >>> index = pd.DatetimeIndex(start='1959Q1', end='2009Q4', freq='Q')
+    >>> dta.set_index(index, inplace=True)
+
+    >>> cycle, trend = sm.tsa.filters.hpfilter(dta.realgdp, 1600)
+    >>> gdp_decomp = dta[['realgdp']]
+    >>> gdp_decomp["cycle"] = cycle
+    >>> gdp_decomp["trend"] = trend
+
+    >>> import matplotlib.pyplot as plt
+    >>> fig, ax = plt.subplots()
+    >>> gdp_decomp[["realgdp", "trend"]]["2000-03-31":].plot(ax=ax,
+    ...                                                      fontsize=16);
+    >>> plt.show()
+
+    .. plot:: plots/hpf_plot.py
+
+    Notes
+    -----
+    The HP filter removes a smooth trend, `T`, from the data `X`. by solving
+
+    min sum((X[t] - T[t])**2 + lamb*((T[t+1] - T[t]) - (T[t] - T[t-1]))**2)
+     T   t
+
+    Here we implemented the HP filter as a ridge-regression rule using
+    scipy.sparse. In this sense, the solution can be written as
+
+    T = inv(I - lamb*K'K)X
+
+    where I is a nobs x nobs identity matrix, and K is a (nobs-2) x nobs matrix
+    such that
+
+    K[i,j] = 1 if i == j or i == j + 2
+    K[i,j] = -2 if i == j + 1
+    K[i,j] = 0 otherwise
+
+    See Also
+    --------
+    statsmodels.tsa.filters.bk_filter.bkfilter
+    statsmodels.tsa.filters.cf_filter.cffilter
+    statsmodels.tsa.seasonal.seasonal_decompose
+
+    References
+    ----------
+    Hodrick, R.J, and E. C. Prescott. 1980. "Postwar U.S. Business Cycles: An
+        Empricial Investigation." `Carnegie Mellon University discussion
+        paper no. 451`.
+    Ravn, M.O and H. Uhlig. 2002. "Notes On Adjusted the Hodrick-Prescott
+        Filter for the Frequency of Observations." `The Review of Economics and
+        Statistics`, 84(2), 371-80.
+    """
+	
+    #_pandas_wrapper = _maybe_get_pandas_wrapper(X)
+    X = np.asarray(X, float)
+    if X.ndim > 1:
+        X = X.squeeze()
+    nobs = len(X)
+    I = sparse.eye(nobs,nobs)
+    offsets = np.array([0,1,2])
+    data = np.repeat([[1.],[-2.],[1.]], nobs, axis=1)
+    K = sparse.dia_matrix((data, offsets), shape=(nobs-2,nobs))
+
+    use_umfpack = True
+    trend = spsolve(I+lamb*K.T.dot(K), X, use_umfpack=use_umfpack)
+
+    cycle = X-trend
+    #if _pandas_wrapper is not None:
+    #    return _pandas_wrapper(cycle), _pandas_wrapper(trend)
+    return cycle, trend
+ 
+   
     
     
     

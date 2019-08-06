@@ -5,23 +5,12 @@ Author:   Wes Hamlyn
 Created:  16-Aug-2016
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy as sp
+import win32clipboard as cb
 
 
 def iseven(number):
@@ -110,20 +99,7 @@ def inpoly(datax, datay, polyx, polyy):
             idx.append(i)
     
     return idx
-    
 
-def plot_blocky(ax, data, zdata, linespec='b-', lw=1):
-    """
-    Convenience function for plotting a blocky log.
-    
-    Ensure that the zdata log has 1 more sample than the data log.
-    """
-    
-    for i in range(0, len(data)):
-        ax.plot([data[i], data[i]], [zdata[i], zdata[i+1]], linespec, lw=lw)
-        
-    for i in range(1, len(data)):
-        ax.plot([data[i-1], data[i]], [zdata[i], zdata[i]], linespec, lw=lw)
 
 
 def get_dist(ax):
@@ -152,6 +128,7 @@ def get_dist(ax):
     return x1, x2, y1, y2, dist
 
 
+
 def nextpow2(value):
     """
     Returns the next power of 2 larger than value.
@@ -160,6 +137,7 @@ def nextpow2(value):
     npow2 = 1<<(value-1).bit_length()
     
     return npow2
+
 
 
 def padzeros(data, pad_length):
@@ -184,3 +162,74 @@ def padzeros(data, pad_length):
                      mode='linear_ramp', end_values=0)
     
     return data_pad, pad_start, pad_end
+
+
+
+def clip_seis_amp(tdata, min_clip='None', max_clip='None'):
+    """
+    Apply amplitude clipping to seismic data traces.
+    """
+    
+    tdata = np.array(tdata)
+    
+    if min_clip == 'None':
+        min_clip = np.min(tdata)
+        
+    if max_clip == 'None':
+        max_clip = np.max(tdata)
+    
+    idx_min = np.nonzero(tdata <= min_clip)
+    idx_max = np.nonzero(tdata >= max_clip)
+    
+    tdata[idx_min] = min_clip
+    tdata[idx_max] = max_clip
+    
+    return tdata
+
+
+
+def smooth_log(log, smooth_window):
+    """
+    Function to smooth logs using a running average.
+    """
+	
+    # make sure smoothing window is an odd number    
+    if smooth_window%2 == 0: # 0 is even number; 1 is odd number
+        smooth_window = smooth_window + 1
+    
+    # pad top and bottom of log with duplicate values to avoid edge effects
+    s1 = log[0]
+    s2 = log[-1]
+    padtop = s1*np.ones(int(smooth_window/2))
+    padend = s2*np.ones(int(smooth_window/2))
+    logpad = np.hstack([padtop, log, padend])
+    
+    # design boxcar operator and smooth the log
+    filt = np.ones(smooth_window)/smooth_window
+    logsm = sp.convolve(logpad, filt, 'valid')
+
+    return logsm
+
+
+def get_clipboard():
+    """
+    Convenience function to copy contents of clipboard to a numpy array. First
+    written to copy data from and Excel spreadsheet via a copy/paste type of
+    operation.
+    
+    Assumes all data are numeric and floating point (could easily be improved)
+    
+    Last modified: 17-May-2019
+    """
+    
+    cb.OpenClipboard()
+    data = cb.GetClipboardData()
+    cb.CloseClipboard()
+    
+    tmp = []
+    for each in data.split('\r\n'):
+        tmp.append(each.split('\t'))
+    
+    tmp.pop(-1)    
+    data2 = np.array(tmp, dtype='float')
+    return data2

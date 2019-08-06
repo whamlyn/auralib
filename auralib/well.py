@@ -5,38 +5,27 @@ Author:   Wes Hamlyn
 Created:  17-Aug-2016
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
 
-class Well():
+
+class AuraWell():
     """
     Class for top-level well objects.
     """
     def __init__(self, wellid, type='Well'):
         self.type = type
-        self.header = WellHeader()
+        self.header = AuraWellHeader()
         self.header.wellid = wellid
         
-        self.logs = Logs()
+        self.logs = AuraLogs()
 
-        self.td = TD()
+        self.td = AuraTD()
 
 
-class WellHeader():
+
+class AuraWellHeader():
     """
     Class for well header data and operations
     """
@@ -44,7 +33,8 @@ class WellHeader():
         pass
 
 
-class Logs():
+
+class AuraLogs():
     """
     Class for top-level well log data and operations
     """
@@ -52,25 +42,40 @@ class Logs():
         self.type = 'Logs container'
 
 
-class Log():
+
+class AuraLog():
     """
-    Class for regularly sampled (periodic) well log data.
-    self.data = log sample values 
-    self.units = unit string corresponding to log digits
-    self.ztype = depth reference type (MD, TVDkb, TVDss, TVDml, TWT
-                 OWT
+    Class to store log data.
     """
-    def __init__(self, data, units='', ztype='md', 
-                 start=np.nan, stop=np.nan, step=np.nan):
-        self.data = data
-        self.units = units
+    
+    def __init__(self, data, zref, name, ztype='md', units='', 
+                 plt_range=[0, 0], c='k', lw=0.5, fs=8.0):
+        """
+        Constructor method...
+        self.data = log digits
+        self.zref = z-reference log (i.e. depth or time samples)
+        self.name = textual name of well log (i.e. the log mnemonic)
+        self.ztype = textual name of zref type (i.e. 'md', 'tvd', 'tvdss', 'twt')
+        self.units = textual units string (i.e. 'ft/sec', 'API', 'g/cc', etc.)
+        self.plt_range = min and max range of log in plot displays
+        self.c = colour of log in plot displays
+        self.lw = line width of log in plot displays
+        self.fs = font size of log name in plot displays
+        """
+        
+        self.data = np.array(data)
+        self.zref = zref
+        self.name = name
         self.ztype = ztype
-        self.start = start
-        self.stop = stop
-        self.step = step
+        self.units = units
+        self.plt_range = plt_range
+        self.c = c
+        self.lw = lw
+        self.fs = fs
 
 
-class TD():
+
+class AuraTD():
     """
     Class for top-level well time-depth data and operations
     """
@@ -83,8 +88,9 @@ class TD():
         else:
             print('Time and depth arrays have different numbers of samples!')
 
-            
-class Markers():
+
+
+class AuraMarkers():
     """
     Class for storing well marker data.  Very simple for the moment, need to
     refine this for more rigorous usage.
@@ -96,3 +102,5 @@ class Markers():
         self.tvdss = []
         self.utmx = []
         self.utmy = []
+
+

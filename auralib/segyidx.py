@@ -6,19 +6,6 @@ Author:   Wes Hamlyn
 Created:   20-Nov-2016
 Last Mod:  1-Dec-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
@@ -83,8 +70,23 @@ class SegyIndex(object):
     
     def build_segy_index(self, segy_file, def_thead):
         """
-        Given a SEG-Y file and the auralib binary and trace header definitions
+        Given a SEG-Y file and the auralib trace header definitions
         build an index file.
+        
+        trc, fold = build_segy_index(segy_file, def_thead)
+        
+        Inputs:
+            segy_file - Path to segy file to be indexed
+            def_thead - Dictionary of trace header kewords and format. Requires
+                        keywords 'il' and 'xl' to perform indexing.
+        
+        Outputs:
+            None
+            
+		
+		Known Issues: 
+		1) Apparently having an inline or crossline step other than 1 will cause
+    	   this to break.  -Wes H. Sept 2017
         """
         
         self.segy_file = segy_file 
@@ -207,9 +209,11 @@ class SegyIndex(object):
         
         This method assumes data are sorted by inline and then crossline and 
         just does a straight running count through the headers rather than 
-        using the np.nonzero() approach which is fairly slow on large arrays.
+        using the np.nonzero() approach which becomes quite slow on large
+        arrays.
         
-        This is still in development, needs to be finalized and tested -Wes
+        This method is still in development, needs to be finalized and tested
+        -Wes
         """
         
         self.segy_file = segy_file 
@@ -361,6 +365,29 @@ class SegyIndex(object):
         
         
     def get_index_tnums(self, il, xl):
+        """
+        Method to return the starting trace and fold of a particular
+        inline/xline bin in 3D survey.  Operates both on post stack and
+        prestack SEG-Y volumes.  Assumes that data are sorted first by INLINE, 
+        next by XLINE, and lastly by OFFSET but may work in other cases
+        
+        trc, fold = get_idx_tnums(il, xl)
+        
+        Inputs:
+            il - Inline number in segy file (integer value)
+            xl - Xline number in segy file (integer value)
+        
+        Outputs:
+            trc - Trace number (zero indexed) of the first occurrence of the 
+                  specified Inline & Xline inputs
+           fold - number of occrrences of the Inline & Xline inputs which
+                  occur sequentially. For stack volumes, fold will either be
+                  1 or -1 (i.e. unpopulated inline/xline bin).  For CMP gathers
+                  fold will be either -1 (unpopulated inline/xline bin) or an 
+                  integer value corresponding to number of traces in the CMP
+                  ensemble.
+        """
+            
         il_max = self.il_min + self.il_num
         xl_max = self.il_min + self.il_num
         

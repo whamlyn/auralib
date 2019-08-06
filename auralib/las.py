@@ -5,19 +5,6 @@ Author:   Wes Hamlyn
 Created:  15-May-2015
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 import numpy as np
@@ -59,6 +46,7 @@ class LASReader(object):
         for i in range(0, self.num_lines):
             
             self.buf = self.fd.readline()
+            self.buf = self.buf.strip() # remove leading/trailing whitespace
             #print(self.buf[:-2])
             
             # determine which block in the LAS file the cursor is currently in
@@ -148,8 +136,9 @@ class LASReader(object):
         #  isn't supported by this module yet
         if self.vers_info['WRAP']['data'].lower() in set(['true', 'yes', 'y']):
             print('LAS file contains wrapped log values')
-            print('This LAS reader does not support wrapped files')
+            print('This LAS reader does not yet support wrapped files')
             print('Aborting... ')
+            
                     
         else:
             self._get_curve_data()

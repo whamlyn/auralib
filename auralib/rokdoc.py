@@ -5,19 +5,6 @@ Author:   Wes Hamlyn
 Created:  25-Mar-2016
 Last Mod: 17-Aug-2016
 
-Copyright 2016 Wes Hamlyn
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """
 
 def load_horizon_3d(infile, il_min, il_max, xl_min, xl_max):
@@ -169,3 +156,95 @@ def plot_2d_pdf(ax, pdf, cont_inc=-1, color='b'):
     
     ax.set_xlabel(xattr)
     ax.set_ylabel(yattr)
+
+
+def dump_sgy_from_sxy(sxyfile):
+    """
+    Dump the segy file path which is associated with a RokDoc index (sxy) file.
+    
+    This is a first-iteration and may be buggy. No actual knowledge of the sxy
+    format has been used in this function, only parsing based on observed 
+    patters in several sxy files.
+    
+    Inputs:
+        sxyfile = (string) Path to RokDoc sxy index file
+
+    Outputs:
+        sgyfile = (string) Path to sgy file associated with sxy index file
+    
+    Written by: Wes Hamlyn
+    Created:    20-Sep-2017
+    Last Mod:   20-Sep-2017
+    """
+    
+    with open(sxyfile, 'rb') as fd:
+        fd.seek(0)
+        buf = fd.read(1024)
+
+    nbytes = len(buf)
+
+    buf1 = buf.split(b':')
+    buf2 = buf1[2].split(b'sgy')[0]
+
+    drive_name = buf1[1].decode(errors='ignore')[-1]
+    file_path = buf2.decode(errors='ignore')
+    file_ext = 'sgy'
+
+    sgyfile = '' + drive_name + ':' + file_path + file_ext
+
+    return sgyfile
+
+
+
+def load_rokdoc_well_markers(infile):
+    """
+    Function to load well markers exported from RokDoc in ASCII format.
+    """
+    
+    with open(infile, 'r') as fd:
+        buf = fd.readlines()
+    
+    
+    marker = []
+    well = []
+    md = []
+    tvdkb = []
+    twt = []
+    tvdss = []
+    x = []
+    y = []
+    
+    for line in buf[5:]:
+    
+        c1, c2, c3, c4, c5 = line.split("'")
+        c6, c7, c8, c9, c10, c11 = c5.strip().split()
+        
+        marker.append(c2)
+        well.append(c4)
+        md.append(float(c6))
+        tvdkb.append(float(c7))
+        twt.append(float(c8))
+        tvdss.append(float(c9))
+        x.append(float(c10))
+        y.append(float(c11))
+        
+    
+    markers = {}
+    for each in list(set(well)):
+        markers[each] = {}
+        
+    for i in range(len(marker)):
+        cur_well = well[i]
+        cur_marker = marker[i]
+        cur_md = md[i]
+        cur_tvdkb = tvdkb[i]
+        cur_tvdss = tvdss[i]
+        cur_twt = twt[i]
+        cur_x = x[i]
+        cur_y = y[i]
+        
+        markers[cur_well][cur_marker] = {'md': cur_md, 'tvdkb': cur_tvdkb,
+                                         'tvdss': cur_tvdss, 'twt': cur_twt,
+                                         'x': cur_x, 'y': cur_y}
+    
+    return markers
