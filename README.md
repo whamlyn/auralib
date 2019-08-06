@@ -1,7 +1,6 @@
 
 ![auralib](https://github.com/whamlyn/auralib/blob/master/auralib_logo_150x115.png)
 
-# **``auralib``**
 Python package to support investigation of geoscience problems including 
 geophysics, rock physics, petrophysics, and data read/write in common formats.
 
@@ -10,8 +9,6 @@ maturity and have been built as-needed to solve technical problems in a
 production geoscience environment.  Some things will work better than others.
 
 
-
-Copyright 2016 Wes Hamlyn
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
