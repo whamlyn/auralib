@@ -1,5 +1,5 @@
 """
-AuraQI module containing plotting functions and related stuff...
+auralib module containing plotting functions and related stuff...
 
 Author:   Wes Hamlyn
 Created:  20-Jan-2017

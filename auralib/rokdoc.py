@@ -1,5 +1,5 @@
 """
-AuraQI module containing helper functions for reading data from RokDoc exports.
+auralib module containing helper functions for reading data from RokDoc exports.
 
 Author:   Wes Hamlyn
 Created:  25-Mar-2016

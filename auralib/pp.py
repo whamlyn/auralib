@@ -1,5 +1,5 @@
 """
-AuraQI module containing petrophysics functions.
+auralib module containing petrophysics functions.
 
 Author:   Wes Hamlyn
 Created:  25-Mar-2016

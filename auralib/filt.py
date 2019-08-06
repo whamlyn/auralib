@@ -1,5 +1,5 @@
 """
-AuraQI module for various types of time and frequency domain filters.
+auralib module for various types of time and frequency domain filters.
 
 Author:   Wes Hamlyn
 Created:  3-Jan-2015

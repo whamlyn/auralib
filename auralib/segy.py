@@ -1,5 +1,5 @@
 """
-AuraQI module for reading data stored in SEG-Y format.
+auralib module for reading data stored in SEG-Y format.
 
 Author:   Wes Hamlyn
 Created:   1-Sep-2014

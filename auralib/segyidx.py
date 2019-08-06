@@ -1,5 +1,5 @@
 """
-AuraQI module for building and using indexing schemes for fast random access to 
+auralib module for building and using indexing schemes for fast random access to 
 data in SEG-Y format.
 
 Author:   Wes Hamlyn

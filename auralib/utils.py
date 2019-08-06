@@ -1,5 +1,5 @@
 """
-AuraQI module for various utility functions.
+auralib module for various utility functions.
 
 Author:   Wes Hamlyn
 Created:  16-Aug-2016

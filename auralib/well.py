@@ -1,5 +1,5 @@
 """
-AuraQI module defining well data classes for the auralib data model.
+auralib module defining well data classes for the auralib data model.
 
 Author:   Wes Hamlyn
 Created:  17-Aug-2016

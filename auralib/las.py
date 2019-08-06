@@ -1,5 +1,5 @@
 """
-AuraQI module for reading data stored in LAS format.
+auralib module for reading data stored in LAS format.
 
 Author:   Wes Hamlyn
 Created:  15-May-2015

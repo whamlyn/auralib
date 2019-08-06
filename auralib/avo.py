@@ -1,5 +1,5 @@
 '''
-AVO functions and related stuff
+auralib module for AVO functions and related calculations
 
 Written by: Wes Hamlyn
 Created:    Approx. 2010

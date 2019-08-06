@@ -1,5 +1,5 @@
 """
-AuraQI module containing Rock physics functions and related stuff...
+auralib module containing Rock physics functions and related stuff...
 
 Author:   Wes Hamlyn
 Created:   3-Aug-2011

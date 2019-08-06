@@ -1,5 +1,5 @@
 """
-AuraQI module containing objects and functions to read data from an AuraQI
+auralib module containing objects and functions to read data from an auralib
 project structure.
 
 Author:   Wes Hamlyn

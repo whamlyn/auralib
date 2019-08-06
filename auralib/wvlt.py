@@ -1,5 +1,5 @@
 """
-AuraQI module to define various types of wavelets.
+auralib module to define various types of wavelets.
 
 Author:   Wes Hamlyn
 Created:   3-Jan-2016

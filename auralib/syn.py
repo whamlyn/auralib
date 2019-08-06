@@ -1,5 +1,5 @@
 """
-AuraQI module for creating synthetic seismograms.
+auralib module for creating synthetic seismograms.
 
 Author:   Wes Hamlyn
 Created:  16-Aug-2016

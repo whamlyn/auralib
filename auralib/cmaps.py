@@ -1,5 +1,5 @@
 """
-AuraQI module providing various custom colormaps.
+auralib module providing various custom colormaps.
 
 Author:   Wes Hamlyn
 Created:   19-Dec-2016

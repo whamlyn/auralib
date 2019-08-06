@@ -1,5 +1,5 @@
 """
-Initialization file for AuraQI package modules.
+Initialization file for auralib package modules.
 
 Author:   Wes Hamlyn
 Created:  1-Jan-2016
