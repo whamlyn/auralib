@@ -1,4 +1,5 @@
 
+![auralib](https://github.com/whamlyn/auralib/blob/master/auralib_logo_150x115.png)
 
 # **``auralib``**
 Python package to support investigation of geoscience problems including 
