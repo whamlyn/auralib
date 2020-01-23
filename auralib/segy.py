@@ -13,6 +13,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import sys
+import codecs
 
 
 
@@ -217,10 +218,13 @@ class Segy(object):
             if ilxlg == ilxl0:
                 if verbose:
                     print('---Success: IL: %i XL: %i Trace: %i' % (il0, xl0, tg))
-            
+                tg = [tg]
+                
             elif count == max_iter:
-                print('Failed to find desired inline. Terminating...')
-                break
+                if verbose:
+                    print('Failed to find desired inline. Terminating...')
+                return []
+                #break
                 
             elif ilxlg > ilxl0:
                 tmax = tg*1
@@ -315,7 +319,7 @@ class Segy(object):
         return tdata
     
     
-    def read_tdata_multi(self, tr_start, tr_end, verbose=0):
+    def read_tdata_multi(self, tr_start, tr_end, skip=1, verbose=0):
         """
         Read multiple sequential traces from a SEG-Y file.  This method is faster
     		than read_trace_data() but is restricted to reading sequential traces.
@@ -358,7 +362,7 @@ class Segy(object):
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in range(tr_start, tr_end, skip):
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
                         print('reading trace %i' % (tracenum))
@@ -390,7 +394,7 @@ class Segy(object):
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in range(tr_start, tr_end, skip):
                     
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
@@ -568,7 +572,7 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead_multi(self,  tracenum1, tracenum2, verbose=0):
+    def read_thead_multi(self,  tracenum1, tracenum2, skip=1, verbose=0):
         """
         Read trace headers from sequential traces in a SEG-Y file.
         Note:
@@ -585,7 +589,7 @@ class Segy(object):
 
         fd = open(self.filename, 'rb')
         count = 0
-        for i in range(tracenum1, tracenum2):
+        for i in range(tracenum1, tracenum2, skip):
             
             count = count + 1
             if (verbose > 0) & (count == verbose+1):
@@ -619,7 +623,7 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead_multi_devtest(self,  tracenum1, tracenum2, verbose=0):
+    def read_thead_multi_devtest(self,  tracenum1, tracenum2, skip=1, verbose=0):
         """
         Read trace headers from sequential traces in a SEG-Y file.
         Note:
@@ -637,7 +641,7 @@ class Segy(object):
         fd = open(self.filename, 'rb')
         
         count = 0
-        for i in range(tracenum1, tracenum2):
+        for i in range(tracenum1, tracenum2, skip):
             
             count = count + 1
             if (verbose > 0) & (count == verbose+1):
@@ -745,6 +749,29 @@ class Segy(object):
         fd.close()
     
     
+    def write_ebcdic_new(self, ebcdic_text_file):
+        """
+        Write or update an ebcdic header
+        
+        ebcdic_text = ASCII file containing ebcdic header text, must be 40
+                      lines in length
+        """
+        
+        with open(ebcdic_text_file, 'r') as fd:
+            txt = fd.readlines()
+        
+        with open(self.filename, 'rb+') as fd:
+            fd.seek(0, 0)
+            for line in txt:
+                line = '%-80s' % (line.replace('\t', '    ').replace('\n', ''))
+                if len(line)==0:
+                    line = '%80s' % (80*' ')
+                    
+                line = codecs.encode(line, 'cp500')
+                
+                fd.write(line)
+    
+    
     def write_bhead(self, def_bhead, bhead):
         """
         Writes a Binary header
@@ -764,7 +791,7 @@ class Segy(object):
         for key in self.def_bhead.keys():
 
             bpos = self.def_bhead[key]['bpos'] +3199
-            print(bpos)
+            #print(bpos)
             fd.seek(bpos, 0)
             buf = pack(self.def_bhead[key]['fmt'], self.bhead[key])
             fd.write(buf)

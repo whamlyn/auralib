@@ -19,10 +19,10 @@ def d2t(depth, data, td_depth, td_twt, target_twt):
     resamples the log data to a regular sampling rate in time.
     """
     
-    f1 = interp1d(td_depth, td_twt, kind='linear', bounds_error=False, fill_value='extrapolate')
+    f1 = interp1d(td_depth, td_twt, kind='linear', bounds_error=False, fill_value=np.nan)
     twt_logstep = f1(depth)
         
-    f2 = interp1d(twt_logstep, data, kind='linear', bounds_error=False, fill_value='extrapolate')
+    f2 = interp1d(twt_logstep, data, kind='linear', bounds_error=False, fill_value=np.nan)
     data_twt = f2(target_twt)
     
     return data_twt

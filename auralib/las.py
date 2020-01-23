@@ -14,7 +14,7 @@ class LASReader(object):
     Python class for reading log data in LAS format.
     """
     
-    def __init__(self, filename, null_subs=np.nan, max_lines=-1):
+    def __init__(self, filename, null_subs=np.nan, max_lines=-1, read_tops=False):
         """
         Constructor for LAS class
         """
@@ -29,6 +29,7 @@ class LASReader(object):
         self.curve_info = {}
         self.curves = {}
         self.curve_names = []
+        self.read_tops = read_tops
         
         # open LAS file for reading        
         self.fd = open(self.filename, 'r')
@@ -194,10 +195,11 @@ class LASReader(object):
         """
         Method to read tops from the unofficial Tops section of an LAS file
         """
-        top = self.buf.split()[0]
-        depth = float(self.buf.split()[1])
-        
-        self.tops[top] = depth
+        if self.read_tops:
+            top = self.buf.split()[0]
+            depth = float(self.buf.split()[1])
+            
+            self.tops[top] = depth
         
     
     def _get_other(self):

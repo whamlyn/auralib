@@ -284,10 +284,10 @@ def Rpp_wiggins(vp1, vs1, rho1, vp2, vs2, rho2, theta1, terms=3):
     return Rpp
 
 
-def Rpp_smithgidlow(theta_in, vp_in, vs_in, rho_in):
+def Rpp_smithgidlow(theta_in, vp_in, vs_in, rho_in, theta_mode='incident'):
     """
-    Function for calculating P-P reflectivity using Smith-Gidlow P-P 
-    reflectivity approximation.
+    Function for calculating P-P reflectivity using Smith-Gidlow P-P reflectivity
+    approximation.
     """
     
     vp_in = np.array(vp_in)
@@ -304,20 +304,42 @@ def Rpp_smithgidlow(theta_in, vp_in, vs_in, rho_in):
     dvs = vs2 - vs1
     vs = (vs1 + vs2)/2
     
+    rho1 = rho_in[:-1]
+    rho2 = rho_in[1:]
+    drho = rho2 - rho1
+    rho = (rho1 + rho2)/2
+    
+    Ip1 = vp1*rho1
+    Ip2 = vp2*rho2
+    dIp = Ip2 - Ip1
+    Ip = (Ip1 + Ip2)/2
+
+    Is1 = vs1*rho2
+    Is2 = vs2*rho2
+    dIs = Is2 - Is1
+    Is = (Is1 + Is2)/2
+
     theta_i = np.array(theta_in)
     theta_ir = np.deg2rad(theta_i)
     theta_tr = np.arcsin(vp2/vp1*np.sin(theta_ir))
-    theta_r = (theta_ir + theta_tr)/2
     
-    c = 5/8 + 1/2*np.tan(theta_r)**2 - 1/2*(vs/vp)**2*np.sin(theta_r)**2
-    d = -4*(vs/vp)**2*np.sin(theta_r)**2
+    if theta_mode == 'average':
+        theta_r = (theta_ir + theta_tr)/2
     
-    Rpp_sg = c*dvp/vp + d*dvs/vs
-        
+    elif theta_mode == 'incident':
+        theta_r = theta_ir
+    
+    k = (vs/vp)**2
+    
+    A = (5/8 - 0.5*k*np.sin(theta_r)**2 + 0.5*np.tan(theta_r)**2)
+    B = (-4*k*np.sin(theta_r)**2)
+    
+    Rpp_sg = A*dvp/vp + B*dvs/vs
+            
     return Rpp_sg
 
 
-def Rpp_fatti(theta_in, vp_in, vs_in, rho_in, num_terms=3):
+def Rpp_fatti(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident'):
     """
     Function for calculating P-P reflectivity using Fatti's P-P reflectivity
     approximation.
@@ -342,29 +364,46 @@ def Rpp_fatti(theta_in, vp_in, vs_in, rho_in, num_terms=3):
     drho = rho2 - rho1
     rho = (rho1 + rho2)/2
     
+    Ip1 = vp1*rho1
+    Ip2 = vp2*rho2
+    dIp = Ip2 - Ip1
+    Ip = (Ip1 + Ip2)/2
+
+    Is1 = vs1*rho2
+    Is2 = vs2*rho2
+    dIs = Is2 - Is1
+    Is = (Is1 + Is2)/2
+
     theta_i = np.array(theta_in)
     theta_ir = np.deg2rad(theta_i)
     theta_tr = np.arcsin(vp2/vp1*np.sin(theta_ir))
-    theta_r = (theta_ir + theta_tr)/2
     
-    Rp = 1/2*(dvp/vp + drho/rho)
-    Rs = 1/2*(dvs/vs + drho/rho)
+    if theta_mode == 'average':
+        theta_r = (theta_ir + theta_tr)/2
     
+    elif theta_mode == 'incident':
+        theta_r = theta_ir
+    
+    k = (vs/vp)**2
+    term1 = 0.5*dIp/Ip*(1 - np.tan(theta_r)**2)
+    term2 = -4*k*dIs/Is*np.sin(theta_r)**2
+    term3 = -(0.5*drho/rho*np.tan(theta_r)**2 - 2*k*drho/rho*np.sin(theta_r)**2)
+
     if num_terms == 3:
-        Rpp_fat = Rp*(1+np.tan(theta_r)**2) - 4*(vs/vp)**2*Rs*np.sin(theta_r)**2 - \
-                  (1/2*np.tan(theta_r)**2-2*(vs/vp)**2*np.sin(theta_r)**2)*drho/rho
+        Rpp_fat = term1 + term2 + term3
+        
     elif num_terms == 2:
-        Rpp_fat = Rp*(1+np.tan(theta_r)**2) - 4*(vs/vp)**2*Rs*np.sin(theta_r)**2
+        Rpp_fat = term1 + term2
         
     return Rpp_fat
     
     
-def Rpp_shuey(theta_in, vp_in, vs_in, rho_in, num_terms=3):
+def Rpp_shuey(theta_in, vp_in, vs_in, rho_in, num_terms=2, theta_mode='average'):
     """
     Calculate angle dependent p-wave to p-wave reflection coefficients using
     Shuey's rearrangement of Aki & Richards approximation of .
     
-    Reference: AVO, Castagna & Chopra
+    Reference: Shuey, 1985 (Geophysics)
     """
     
     vp_in = np.array(vp_in)
@@ -386,23 +425,29 @@ def Rpp_shuey(theta_in, vp_in, vs_in, rho_in, num_terms=3):
     drho = rho2 - rho1
     rho = (rho1 + rho2)/2
     
-    prat1 = ((vp1/vs1)**2-2)/(2*(vp1/vs1)**2-1)
-    prat2 = ((vp2/vs2)**2-2)/(2*(vp2/vs2)**2-1)
+    prat1 = (vp1**2-2*vs1**2)/(2*(vp1**2-vs1**2))
+    prat2 = (vp2**2-2*vs2**2)/(2*(vp2**2-vs2**2))
     dprat = prat2 - prat1
     prat = (prat1 + prat2)/2
     
     theta_i = np.array(theta_in)
     theta_ir = np.deg2rad(theta_i)
     theta_tr = np.arcsin(vp2/vp1*np.sin(theta_ir))
-    theta_r = (theta_ir + theta_tr)/2
+
+    if theta_mode == 'average':
+        theta_r = (theta_ir + theta_tr)/2
+    
+    elif theta_mode == 'incident':
+        theta_r = theta_ir    
     
     Rp = 1/2*(dvp/vp + drho/rho)
-    B = (dvp/vp)/(dvp/vp+drho/rho)
-    A0 = B-2*(1+B)*(1-2*prat)/(1-prat)
-    
+    B = (dvp/vp)/(dvp/vp + drho/rho)
+    A0 = B - 2*(1+B)*(1-2*prat)/(1-prat)
+    A = A0 + 1/(1-prat)**2 * dprat/Rp
+
     if num_terms==3:
         Rpp_shuey = Rp + (Rp*A0 + dprat/((1-dprat)**2))*np.sin(theta_r)**2 + \
-                    1/2*dvp/vp*(np.tan(theta_r)**2-np.sin(theta_r)**2)
+                    1/2*dvp/vp*(np.tan(theta_r)**2 - np.sin(theta_r)**2)
     elif num_terms==2:
         Rpp_shuey = Rp + (Rp*A0 + dprat/((1-dprat)**2))*np.sin(theta_r)**2
         

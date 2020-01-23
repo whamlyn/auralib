@@ -170,9 +170,63 @@ def radar(ax, data, data_names, lw=1.0, color='k', ls='-', marker=None, label=No
     # Fill area
     ax.fill(angles, data, color=color, alpha=0.1)
     ax.grid(True, ls=':')
+
+
+
+def plot_filled_logs(ax, logs, z, fill_colors, labels, lw=1.0, alpha=0.3):
+    """
+    Plot a series of logs using fill colors between each log. Designed to show
+    a series of mineral fraction logs or fluid saturation logs
+    """
     
+    import matplotlib as mpl
+    
+    nlogs = len(logs)
+    
+    # take the log fill colors, and make them darker to be used for the log 
+    # line colors. This will make them more prominent in the display
+    log_colors = []
+    for color in fill_colors:
+        rgb = mpl.colors.to_rgb(color)
+        rgb = np.array(rgb)
+        rgb = rgb*0.3
+        log_colors.append(rgb)
+        
+    # first plot the log fills
+    logsum = 0 # cumulative log value
+    for i in range(nlogs):
+        curlog = logs[i] + logsum
+        ax.fill_betweenx(z, curlog, logsum, where=curlog>=logsum, 
+                         facecolor=fill_colors[i], alpha=alpha, label=labels[i])
+        logsum = logsum + logs[i]
+        
+    # next plot the log curves to visually separate the filled areas
+    logsum = 0 # cumulative log value
+    for i in range(nlogs):
+        curlog = logs[i] + logsum
+        ax.plot(curlog, z, c=log_colors[i], lw=lw, alpha=alpha)
+        logsum = logsum + logs[i]
 
 
+
+def format_log_axes(axes, ylabel):
+    """
+    Function to format a series of axes displaying simple log curves.
+    """
+    
+    for ax in axes:
+        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_label_position('top')
+        ax.grid(True, ls=':')
+    
+    for ax in axes[1:-1]:
+        plt.setp(ax.get_yticklabels(), visible=False)
+    
+    axes[0].set_ylabel(ylabel)
+    axes[-1].set_ylabel(ylabel)
+    axes[-1].yaxis.set_ticks_position('right')
+    axes[-1].yaxis.set_label_position('right')\
+    
 def make_wellview(ntrack=5, figsize=(5, 5)):
     """
     Function for creating a blank, multi-track well viewer with a well header
@@ -432,7 +486,7 @@ def add_van_krevelan_template(ax, lw=2, fs=14, c='k'):
     
     
 def plot_confusion_matrix(y_true, y_pred, classes, normalize=False, title=None,
-                          cmap=plt.cm.Blues, fig=None):
+                          cmap=plt.cm.Blues, fig=None, flip_text_color=False):
     """
     This function prints and plots the confusion matrix.
     Normalization can be applied by setting `normalize=True`.
@@ -481,19 +535,31 @@ def plot_confusion_matrix(y_true, y_pred, classes, normalize=False, title=None,
            xlabel='Predicted label')
 
     # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+    ax.xaxis.set_ticks_position('top')
+    ax.xaxis.set_label_position('top')
+    plt.setp(ax.get_xticklabels(), rotation=-45, ha="right",
              rotation_mode="anchor")
 
     # Loop over data dimensions and create text annotations.
     fmt = '.2f' if normalize else 'd'
     thresh = cm.max() / 2.
     for i in range(cm.shape[0]):
+        
         for j in range(cm.shape[1]):
-            ax.text(j, i, format(cm[i, j], fmt),
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "black")
+            
+            if flip_text_color == True:
+                ax.text(j, i, format(cm[i, j], fmt),
+                        ha="center", va="center",
+                        color="white" if cm[i, j] < thresh else "black")
+                
+            elif flip_text_color == False:
+                ax.text(j, i, format(cm[i, j], fmt),
+                        ha="center", va="center",
+                        color="black" if cm[i, j] < thresh else "white")
     
     ax.grid(False)
+
     fig.tight_layout()
     
     return ax
+

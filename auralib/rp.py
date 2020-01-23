@@ -24,11 +24,37 @@ minset['pyr'] = {'K':158.0, 'G':149.0, 'R':5.02} # RokDoc Pyrite
 minset['ker'] = {'K':  3.9, 'G':  4.2, 'R':1.78} # Khadeeva-Vernik K & G
 #minset['ker'] = {'K':  2.9, 'G':  2.7, 'R':1.30} # RokDoc
 
+
 #  FLUID ELASTIC PROPERTIES (EXAMPLE ONLY)
 fluidset = {}
 fluidset['wat'] = {'K':3.223, 'G':0.0, 'R':1.073}  # FLAG
 fluidset['oil'] = {'K':0.598, 'G':0.0, 'R':0.619}  # FLAG
 fluidset['gas'] = {'K':0.095, 'G':0.0, 'R':0.226}  # FLAG
+
+
+def make_fluidset(T, P, S, API, GOR, SG):
+    """
+    Function to create an auralib fluid set for water, oil, and gas elastic
+    properties.
+    
+    T = Temp °C
+    P = Pressure MPa
+    S = Salinity ppm
+    API = Oil Gravity (° API)
+    GOR = Ratio of disolved gas to oil (v/v)
+    SG = specific gravity of gas
+    """
+    
+    K_wat, R_wat = bw_brine(S, T, P)
+    K_oil, R_oil = bw_oil(SG, API, GOR, T, P, verbose=True, fixGORmax=True)
+    K_gas, R_gas = bw_gas(SG, T, P)
+    
+    fluidset = {}
+    fluidset['wat'] = {'K':K_wat, 'G':0.0, 'R':R_wat}
+    fluidset['oil'] = {'K':K_oil, 'G':0.0, 'R':R_oil}
+    fluidset['gas'] = {'K':K_gas, 'G':0.0, 'R':R_gas}
+    
+    return fluidset
 
 
 def prat_vel(Vp, Vs):
@@ -185,7 +211,7 @@ def rho_matrix_from_volset(minset, volset):
 
     R_matrix = np.zeros(nsamp)
 
-    for key in minset.keys():
+    for key in volset.keys():
         R_matrix = R_matrix + volset[key] * minset[key]['R']
 
     return R_matrix
@@ -208,14 +234,19 @@ def woods_mixing_from_sets(fluidset, satset):
     return K_fluid, R_fluid
 
 
-def mod_from_vels(Vp, Vs, Rho):
+def mod_from_vels(Vp, Vs, Rho, out_units='GPa'):
     """
     Convenience function to compute bulk and shear moduli from 
-    Vp, Vp, and Rho values.
+    Vp, Vp, and Rho values. Input units should be m/s and g/cc.
+    
+    Output units may be specified as 'GPa' or 'Pa', default is 'GPa'
     """
     
     K = Rho*(Vp**2.0 - 4.0/3.0*Vs**2)
     G = Rho*Vs**2.0
+    
+    K = K*1e-9
+    G = G*1e-9
     
     return K, G
 
@@ -240,63 +271,36 @@ def brie_mixing(Kliquid, Kgas, Sliquid, Sgas, brie_exp=3.0):
     return Kbrie
 
 
-def gassmann_v(Vp1, Vs1, R1, phi1, Kmin, Mmin, Kfl1, Rfl1, Kfl2, Rfl2):
+def gassmann_vels(vp, vs, rho, phi, Km, Gm, Kf1, Kf2, Rf1, Rf2):
     """
-    Gassman fluid substitution
+    Single-step Gassmann fluid replacment modelling from velocity inputs
     
-    Usage:
-        (Vp2, Vs2, R2) = gassman_sub(Vp1, Vs1, R1, phi1, Kmin, Mmin, 
-                                     Kfl1, Rfl1, Kfl2, Rfl2)
-    Inputs:
-        Vp1  = In-situ Vp (m/s)
-        Vs1  = In-situ Vs (m/s)
-        R1   = In-situ bulk density (kg/m3)
-        phi1 = In-situ porosity (vol/vol)
-        Kmin = Matrix bulk modulus (GPa)
-        Mmin = Matrix shear modulus (GPa)
-        Kfl1 = In-situ fluid bulk modulus (GPa)
-        Rfl1 = In-situ fluid density (kg/m3)
-        Kfl2 = Substituted fluid bulk modulus (GPa)
-        Rfl2 = Substituted fluid density (kg/m3)
-    
-    Outputs:
-        Vp2 = Substituted bulk rock Vp (m/s)
-        Vs2 = Substituted bulk rock Vs (m/s)
-        R2  = Substituted bulk rock density (kg/m3)
+    velocities: m/s
+    densities: kg/m3
+    porosity: v/v
+    bulk and shear moduli: Pascals
     """
     
-    # Convert elastic moduli to Pascals from Giga-pascals and ensure
-    # all inputs are floating point
-    Kmin = Kmin*10**9
-    Mmin = Mmin*10**9
-    Kfl1 = Kfl1*10**9
-    Rfl1 = Rfl1*10**3
-    Kfl2 = Kfl2*10**9
-    Rfl2 = Rfl2*10**3
+    # Step 1: Calculate moduli from velocities
+    Gs1 = vs**2 * rho
+    Ks1 = vp**2 * rho - 4/3*Gs1
     
-    # Step 1: Calculate in-situ elastic moduli from Vp, Vs, and Density
-    Ksat1 = R1 * (Vp1**2 - 4.0/3.0*Vs1**2)
-    Msat1 = R1 * Vs1**2
-
-    # Step 2: Calculate bulk modulus for new fluid
-    A = Ksat1/(Kmin - Ksat1)
-    B = Kfl2/(phi1*(Kmin - Kfl2))
-    C = Kfl1/(phi1*(Kmin - Kfl1))
+    # Step 2: Remove initial pore fluids
+    Kd = (Ks1*(phi*Km/Kf1 + 1 - phi) - Km)/(phi*(Km/Kf1) + Ks1/Km - 1 - phi)
+    Gd = Gs1
     
-    Ksat2 = Kmin*(A+B-C)/(1+A+B-C)
+    # Step 3: Add new pore fluids to dry rock
+    Ks2 = Kd + ((1-Kd/Km)**2)/(phi/Kf2 + (1-phi)/Km - Kd/(Km**2))
+    Gs2 = Gd
     
-    # Step 3: Leave the shear modulus unchanged
-    Msat2 = Msat1
+    # Step 4: Correct density for new fluids
+    rho2 = rho + phi*(Rf2 - Rf1)
     
-    # Step 4: Correct bulk density for fluid change
-    R2 = R1 + phi1*(Rfl2 - Rfl1)
-    R2 = R2*10**-3
+    # Step 5: Recalculate velocities from modulie
+    vp2 = np.sqrt((Ks2 + 4/3*Gs2)/rho2)
+    vs2 = np.sqrt(Gs2/rho2)
     
-    # Step 5: Reassemble the velocities
-    Vp2 = ( (Ksat2 + 4.0/3.0*Msat2)/R2 )**0.5
-    Vs2 = ( Msat2/R2 )**0.5
-    
-    return Vp2, Vs2, R2
+    return vp2, vs2, rho2
 
 
 def gassmann_sat2dry(Ksat, Kmin, Kfl, phi):
@@ -481,16 +485,16 @@ def bw_gas(SG, T, P):
     Pr = P/(4.892-0.4048*SG)    # Pr = pseudopressure
     Tr = Ta/(94.72+170.75*SG)   # Tr = psuedotemperature
     
-    a = 0.03+0.00527*(3.5-Tr)**3
-    b = 0.642*Tr-0.007*Tr**4-0.52
-    c = 0.109*(3.85-Tr)**2
-    d = np.exp(-(0.45+8*(0.56-1.0/Tr)**2)*(Pr**1.2)/Tr)
-    Z = a*Pr+b+c*d
+    a = 0.03 + 0.00527*(3.5 - Tr)**3
+    b = 0.642*Tr - 0.007*Tr**4 - 0.52
+    c = 0.109*(3.85 - Tr)**2
+    d = np.exp(-1*(0.45 + 8*(0.56 - 1.0/Tr)**2)*((Pr**1.2)/Tr))
+    Z = a*Pr + b + c*d
     R = 8.31441
     Rgas = 28.8*SG*P/(Z*R*Ta)
     
     gamma = 0.85 + 5.6/(Pr+2) + 27.1/((Pr+3.5)**2) - 8.7*np.exp(-0.65*(Pr+1))
-    m = 1.2*(-1.0*(0.45+8*(0.56-1.0/Tr)**2)*(Pr**0.2)/Tr)
+    m = 1.2*(-1*(0.45 + 8*(0.56 - 1.0/Tr)**2)*(Pr**0.2)/Tr)
     f = c*d*m + a
     Kgas = P*gamma/(1.0-Pr*f/Z) 
     
@@ -514,19 +518,19 @@ def bw_max_dissolved_gas(SG, API, T, P):
         SG = Specific gravity of gas
         API = Oil gravity in API units
         T = Temperature in degress celcius
-        P = Pressure in Pa
+        P = Pressure in MPa
     
     Output:
         GOR_max (v/v)
     """
-    P = P*1e-6
+        
     Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
     GOR_max = Rg_max
     
     return GOR_max
 
 
-def bw_oil(SG, API, GOR, T, P):
+def bw_oil(SG, API, GOR, T, P, verbose=False, fixGORmax=True):
     """
     Batzle-Wang calculation for oil with dissolved gas
     
@@ -552,33 +556,55 @@ def bw_oil(SG, API, GOR, T, P):
     #T = float(T)
     #P = float(P)
     
-    idx = np.nonzero(GOR == -1)
-    if (GOR==-1).any():
-        Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
-        GOR[idx] = Rg_max
-    
+    Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
+    if verbose:
+        print('Maximum GOR for this oil is %f v/v' % Rg_max)
+        print('Current GOR for this oil is %f v/v' % GOR)
+        
+    if GOR > Rg_max:
+        print("Error: GOR is larger than total disolvable gas. Please set\nGOR to max GOR.")
+        if fixGORmax:
+            print('Correcting GOR = GOR')
+            GOR = Rg_max
+        
+    if GOR < 0.0:
+        if verbose:
+            print('Updated GOR from %f to GORmax %f' % (GOR, Rg_max))
+        GOR = Rg_max
+        
     # Calculate R0 from API.  R0 = g/cc
-    R0 = 141.5/(API+131.5)
-    B0 = 0.972 + 0.00038*(2.4*GOR*(SG/R0)**0.5 + T + 17.8)**1.175
+    R0 = 141.5/(API + 131.5)
     
-    #Calculate psuedodensity Rprime
-    Rprime = (R0/B0)*(1.0 + 0.001*GOR)**-1.0
+    if GOR == 0:
+        # Dead Oil Calculations
+        #print('Calculating for dead oil...')
+        
+        Rp = R0 + (0.00277*P - 1.71e-7 * P**3)*(R0 - 1.15)**2 + 3.49E-4*P
+        Roil = Rp / (0.972 + 3.81E-4*(T+17.78)**1.175)
+        
+        Voil = 2096.0*(R0/(2.6-R0))**0.5 - 3.7*T + 4.64*P + 0.0115*(4.12*(1.08/R0-1)**1.2 - 1)*T*P
+        
     
-    #Calculate density of oil with gas
-    Rowg = (R0 + 0.0012*SG*GOR)/B0
+    if GOR > 0.0:
+        
+        B0 = 0.972 + 0.00038*(2.4*GOR*(SG/R0)**0.5 + T + 17.8)**1.175
+        
+        #Calculate psuedodensity Rprime
+        Rprime = (R0/B0)*(1.0 + 0.001*GOR)**-1.0
+        
+        #Calculate density of oil with gas
+        Rowg = (R0 + 0.0012*SG*GOR)/B0
+        
+        #Correct this density for pressure and find density Rp
+        Rp = Rowg + (0.00277*P - 1.71e-7*P**3)*(Rowg - 1.15)**2 + 3.49e-4*P
+        
+        #Apply temperature correction to obtain actual density
+        Roil = Rp / (0.972 + 3.81e-4*(80.0+17.78)**1.175)
+                
+        Voil = 2096*(Rprime/(2.6-Rprime))**0.5 - 3.7*T + 4.64*P + 0.0115*(4.12*(1.08/Rprime-1.0)**0.5 - 1.0)*T*P
     
-    #Correct this density for pressure and find density Rp
-    Rp = Rowg + (0.00277*P - 1.71e-7*P**3)*(Rowg - 1.15)**2 + 3.49e-4*P
-    
-    #Apply temperature correction to obtain actual density
-    Roil = Rp / (0.972 + 3.81e-4*(80.0+17.78)**1.175)
-    
-    Roil = Roil * 1000  # convert to kg/m3
-    
-    Voil = 2096*(Rprime/(2.6-Rprime))**0.5 - 3.7*T + 4.64*P + \
-            0.0115*(4.12*(1.08/Rprime-1.0)**0.5 - 1.0)*T*P
-    
-    Koil = Voil**2.0 * Roil
+    Roil = Roil * 1000
+    Koil = Voil**2 * Roil
     
     return Koil, Roil
 
@@ -688,7 +714,7 @@ def coord_num2(phi):
     return n
 
 
-def hertz_mindlin(Ks, Gs, phic, P_eff, n):
+def hertz_mindlin(Ks, Gs, phic, P_eff, n=-1):
     """
     Bulk and Shear modulus of dry rock framework from Hertz-Mindlin contact
     theory.
@@ -708,6 +734,9 @@ def hertz_mindlin(Ks, Gs, phic, P_eff, n):
         G_hm = shear modulus of dry rock framework @ critical porosity
     """
     
+    if n==-1:
+        n = coord_num(phic)
+        
     prat = (3.0*Ks - 2.0*Gs)/(2.0*(3.0*Ks + Gs))
     
     A = n**2.0 * (1.0-phic)**2.0 * Gs**2.0
@@ -723,7 +752,46 @@ def hertz_mindlin(Ks, Gs, phic, P_eff, n):
     return K_hm, G_hm
 
 
-def friable_sand(Ks, Gs, phi, phic, P_eff, n):
+def walton(Ks, Gs, phic, P_eff, n, model='rough'):
+    """
+    Bulk and Shear modulus of dry rock framework from Walton model.
+    
+    Usage:
+        K_hm, G_hm = walton(K, G, phic, P, n, f)
+    
+    Inputs:
+        Ks = bulk modulus of mineral comprising matrix (GPa)
+        Gs = shear modulus of mineral comprising matrix (GPa)
+        phic = critical porosity (v/v)
+        P_eff = confining pressure (MPa)
+        n = coordination number
+    
+    Outputs:
+        K_walton = bulk modulus of dry rock framework @ critical porosity
+        G_walton = shear modulus of dry rock framework @ critical porosity
+    """
+    
+    Ls = Ks - 2/3*Gs # lame's parameter
+    A = 1/(4*np.pi)*(1/Gs - 1/(Gs-Ls))
+    B = 1/(4*np.pi)*(1/Gs + 1/(Gs+Ls))
+    K_walton_rough = 1/6*((3*(1-phic)**2*n**2*P_eff)/(np.pi**4*B**2))**(1/3)
+    G_walton_rough = 3/5*K_walton_rough*(5*B+A)/(2*B+A)
+    
+    G_walton_smooth = 1/10*((3*(1-phic)**2*n**2*P_eff)/(np.pi**4*B**2))**(1/3)
+    K_walton_smooth = 5/3*G_walton_smooth
+    
+    if model=='rough':
+        K_walton = K_walton_rough
+        G_walton = G_walton_rough
+        
+    if model=='smooth':
+        K_walton = K_walton_smooth
+        G_walton = G_walton_smooth
+    
+    return K_walton, G_walton
+
+
+def friable_sand(Ks, Gs, phi, phic, P_eff, n, Gscalar=1.0):
     """
     Friable sand rock physics model.
         Reference: Avseth et al., Quantitative Seismic Interpretation, p.54
@@ -741,7 +809,7 @@ def friable_sand(Ks, Gs, phi, phic, P_eff, n):
         G_dry = dry rock shear modulus of friable rock
     """
     
-    K_hm, G_hm = hertz_mindlin(Ks, Gs, phic, P_eff, n)
+    K_hm, G_hm = hertz_mindlin(Ks, Gs, phic, P_eff)
     z = G_hm/6 * (9*K_hm + 8*G_hm)/(K_hm + 2*G_hm)
     
     A = (phi/phic)/(K_hm + 4/3*G_hm)
@@ -752,20 +820,22 @@ def friable_sand(Ks, Gs, phi, phic, P_eff, n):
     D = (1.0-phi/phic)/(Gs + z)
     G_dry = (C+D)**-1 - z
     
+    G_dry = G_dry * Gscalar 
+    
     return K_dry, G_dry
 
 
-def contact_cem(Ks, Gs, Kc, Gc, phi, phic, n):
+def contact_cem(Km, Gm, Kc, Gc, phi, phic, n, Gscalar=1.0):
     """
     Contact Cement Model
     Reference: Avseth et al., Quantitative Seismic Interpretation, p.57
 
     Usage:
-        Kcem, Gcem = contcem(K, G, Kc, Gc, phi, phic, n)
+        Kcem, Gcem = contcem(Km, Gm, Kc, Gc, phi, phic, n)
         
     Inputs:
-        Ks = Bulk modulus of mineral matrix
-        Gs = Shear modulus of mineral matrix
+        Km = Bulk modulus of mineral matrix
+        Gm = Shear modulus of mineral matrix
         Kc = Bulk modulus of cementing mineral
         Gc = Shear modulus of cemeting mineral
         phi = porosity
@@ -777,13 +847,13 @@ def contact_cem(Ks, Gs, Kc, Gc, phi, phic, n):
         G_dry = shear modulus of dry rock from contact cement model
     """
     
-    nu_s = 0.5*(Ks/Gs - 2/3) / (Ks/Gs + 1/3)
+    nu_s = 0.5*(Km/Gm - 2/3) / (Km/Gm + 1/3)
     nu_c = 0.5*(Kc/Gc - 2/3) / (Kc/Gc + 1/3)
     
     alpha = (2/3 * (phic-phi)/(1-phic))**0.5
     
-    lamb_n = 2*Gc*(1-nu_s)*(1-nu_c)/(np.pi*Gs*(1-2*nu_c))
-    lamb_t = Gc/(np.pi*Gs)
+    lamb_n = 2*Gc*(1-nu_s)*(1-nu_c)/(np.pi*Gm*(1-2*nu_c))
+    lamb_t = Gc/(np.pi*Gm)
     
     C_t = 1e-4 * (9.65*nu_s**2 + 4.945*nu_s + 3.1)*lamb_t**(0.01867*nu_s**2 + 0.4011*nu_s - 1.8186)
     B_t = (0.0573*nu_s**2 + 0.0937*nu_s + 0.202)*lamb_t**(0.0274*nu_s**2 + 0.0529*nu_s - 0.8765)
@@ -799,6 +869,8 @@ def contact_cem(Ks, Gs, Kc, Gc, phi, phic, n):
     
     K_dry = n*(1.0-phic)*Mc*S_n/6.0
     G_dry = 3/5*K_dry + 3/20*n*(1-phic)*Gc*S_t
+    
+    G_dry = G_dry * Gscalar
     
     return K_dry, G_dry
 
@@ -853,12 +925,12 @@ def cemented_sand(Ks, Gs, Kc, Gc, phi, phic, S_cem, n):
     return K_dry, G_dry, phi_cem
 
 
-def constant_cem(K, G, Kc, Gc, phi, phic):
+def constant_cem(Km, Gm, Kc, Gc, phi, phic, Vcem, n, Gscalar=1.0):
     """
     Constant Cement Model
 
     Usage:
-        Kconst, Gconst = contcem(K, G, Kc, Gc, phi, phic)
+        Kconst, Gconst = contcem(Km, Gm, Kc, Gc, phi, phi_cem, n)
         
     Inputs:
         K = Bulk modulus of mineral matrix
@@ -866,23 +938,35 @@ def constant_cem(K, G, Kc, Gc, phi, phic):
         Kc = Bulk modulus of cementing mineral
         Gc = Shear modulus of cemeting mineral
         phi = porosity
-        phic = critical porosity    
+        Vcme = volume of bulk rock occupied by cement
+        n = coordination number
     
     Outputs:
         Kcem = bulk modulus of dry rock from contact cement model
         Gcem = shear modulus of dry rock from contact cement model
+        phi = porosity corrected for volume of cement
     """
     
-    a = (phi/phic)/(Kc + Gc*4.0/3.0)
-    b = (1.0 - phi/phic)/(K + Gc*4.0/3.0)
-    Kconst = (a + b)**-1.0 - Gc*4.0/3.0
+    phib = phic - Vcem
+    n_phib = coord_num2(phib)
     
-    Zcem = Gc/6.0 * ((9.0*Kc + 8.0*Gc)/(Kc + 2.0*Gc))
-    c = (phi/phic)/(Gc + Zcem)
-    d = ((1.0 - phi/phic)/(G + Zcem))
-    Gconst = (c + d)**-1.0 - Zcem
+    Kb, Gb = contact_cem(Km, Gm, Kc, Gc, phib, phic, n_phib)
+    a = (phi/phib)/(Kb + Gb*4.0/3.0)
+    b = (1.0 - phi/phib)/(Km + Gb*4.0/3.0)
+    K_dry = (a + b)**-1.0 - Gb*4.0/3.0
     
-    return Kconst, Gconst
+    Z = Gb/6.0 * ((9.0*Kb + 8.0*Gb)/(Kb + 2.0*Gb))
+    c = (phi/phib)/(Gb + Z)
+    d = ((1.0 - phi/phib)/(Gm + Z))
+    G_dry = (c + d)**-1.0 - Z
+    
+    G_dry = G_dry * Gscalar
+    
+    idx = np.nonzero(phi>phib)[0]
+    K_dry[idx] = np.nan
+    G_dry[idx] = np.nan
+    
+    return K_dry, G_dry
 
 
 def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2=1.59):
@@ -983,6 +1067,8 @@ def calc_FT(alpha, K, mu, K_prime=0.0, mu_prime=0.0):
 
 
 
+### Empirical Vp-Vs relationships
+    
 def castagna_mudrock(Vp, B=0.8621, C=-1.1724):
     """
     Vs from Vp using Castagna's mudrock line.
@@ -1238,113 +1324,113 @@ def trend_log10(z, x_top, x_mat, b):
 # Tabe 2 in the paper "A classification for the pressure-sensitivity properties
 # of a sandstone rock frame" (Macbeth, Geophysics 2004)
 macbeth_coeffs = {'Cooper Basin Facies B': {'K_inf': 26.76,
-  'Mu_inf': 27.29,
-  'P_K': 17.74,
-  'P_Mu': 17.67,
-  'S_K': 0.41,
-  'S_Mu': 0.45,
-  'phi_max': 5.5,
-  'phi_mean': 4,
-  'phi_min': 10},
- 'Cooper Bassin Facies A': {'K_inf': 18.63,
-  'Mu_inf': 18.44,
-  'P_K': 15.08,
-  'P_Mu': 11.53,
-  'S_K': 0.61,
-  'S_Mu': 0.63,
-  'phi_max': 13.2,
-  'phi_mean': 11,
-  'phi_min': 17},
- 'Forties (Nelson) Facies A': {'K_inf': 9.15,
-  'Mu_inf': 7.75,
-  'P_K': 7.12,
-  'P_Mu': 6.78,
-  'S_K': 0.65,
-  'S_Mu': 0.67,
-  'phi_max': 25.4,
-  'phi_mean': 24,
-  'phi_min': 26},
- 'Forties (Nelson) Facies B': {'K_inf': 29.86,
-  'Mu_inf': 19.33,
-  'P_K': 9.93,
-  'P_Mu': 13.05,
-  'S_K': 0.58,
-  'S_Mu': 0.5,
-  'phi_max': 13.0,
-  'phi_mean': 13,
-  'phi_min': 13},
- 'Miocene (Gulf Coast)': {'K_inf': 12.4,
-  'Mu_inf': 14.3,
-  'P_K': 9.55,
-  'P_Mu': 23.24,
-  'S_K': 0.75,
-  'S_Mu': 0.53,
-  'phi_max': 21.7,
-  'phi_mean': 22,
-  'phi_min': 22},
- 'North Sea': {'K_inf': 22.93,
-  'Mu_inf': 23.6,
-  'P_K': 25.33,
-  'P_Mu': 27.45,
-  'S_K': 0.59,
-  'S_Mu': 0.4,
-  'phi_max': 7.4,
-  'phi_mean': 5,
-  'phi_min': 10},
- 'Paleocene (W of Shetland)': {'K_inf': 9.94,
-  'Mu_inf': 7.75,
-  'P_K': 6.32,
-  'P_Mu': 7.23,
-  'S_K': 0.5,
-  'S_Mu': 0.55,
-  'phi_max': 27.1,
-  'phi_mean': 17,
-  'phi_min': 36},
- 'Rogliegend (Germany) Facies A': {'K_inf': 24.83,
-  'Mu_inf': 23.19,
-  'P_K': 24.28,
-  'P_Mu': 36.0,
-  'S_K': 0.69,
-  'S_Mu': 0.43,
-  'phi_max': 9.5,
-  'phi_mean': 6,
-  'phi_min': 15},
- 'Rotliegend (Germany) Facies B': {'K_inf': 34.4,
-  'Mu_inf': 29.77,
-  'P_K': 29.02,
-  'P_Mu': 37.56,
-  'S_K': 0.66,
-  'S_Mu': 0.41,
-  'phi_max': 3.4,
-  'phi_mean': 1,
-  'phi_min': 5},
- 'Rotliegend (S North Sea) Facies A': {'K_inf': 10.99,
-  'Mu_inf': 6.5,
-  'P_K': 9.82,
-  'P_Mu': 13.54,
-  'S_K': 0.64,
-  'S_Mu': 0.57,
-  'phi_max': 23.6,
-  'phi_mean': 20,
-  'phi_min': 28},
- 'Rotliegend (S North Sea) Facies B': {'K_inf': 20.5,
-  'Mu_inf': 14.03,
-  'P_K': 9.99,
-  'P_Mu': 11.61,
-  'S_K': 0.6,
-  'S_Mu': 0.55,
-  'phi_max': 15.8,
-  'phi_mean': 11,
-  'phi_min': 19},
- 'Rotliegend (S North Sea) Facies C': {'K_inf': 15.93,
-  'Mu_inf': 11.45,
-  'P_K': 22.12,
-  'P_Mu': 10.98,
-  'S_K': 0.56,
-  'S_Mu': 0.61,
-  'phi_max': 10.9,
-  'phi_mean': 8,
-  'phi_min': 11}}
+                                          'Mu_inf': 27.29,
+                                          'P_K': 17.74,
+                                          'P_Mu': 17.67,
+                                          'S_K': 0.41,
+                                          'S_Mu': 0.45,
+                                          'phi_max': 5.5,
+                                          'phi_mean': 4,
+                                          'phi_min': 10},
+                 'Cooper Bassin Facies A': {'K_inf': 18.63,
+                                          'Mu_inf': 18.44,
+                                          'P_K': 15.08,
+                                          'P_Mu': 11.53,
+                                          'S_K': 0.61,
+                                          'S_Mu': 0.63,
+                                          'phi_max': 13.2,
+                                          'phi_mean': 11,
+                                          'phi_min': 17},
+                 'Forties (Nelson) Facies A': {'K_inf': 9.15,
+                                          'Mu_inf': 7.75,
+                                          'P_K': 7.12,
+                                          'P_Mu': 6.78,
+                                          'S_K': 0.65,
+                                          'S_Mu': 0.67,
+                                          'phi_max': 25.4,
+                                          'phi_mean': 24,
+                                          'phi_min': 26},
+                 'Forties (Nelson) Facies B': {'K_inf': 29.86,
+                                          'Mu_inf': 19.33,
+                                          'P_K': 9.93,
+                                          'P_Mu': 13.05,
+                                          'S_K': 0.58,
+                                          'S_Mu': 0.5,
+                                          'phi_max': 13.0,
+                                          'phi_mean': 13,
+                                          'phi_min': 13},
+                 'Miocene (Gulf Coast)': {'K_inf': 12.4,
+                                          'Mu_inf': 14.3,
+                                          'P_K': 9.55,
+                                          'P_Mu': 23.24,
+                                          'S_K': 0.75,
+                                          'S_Mu': 0.53,
+                                          'phi_max': 21.7,
+                                          'phi_mean': 22,
+                                          'phi_min': 22},
+                 'North Sea': {'K_inf': 22.93,
+                                          'Mu_inf': 23.6,
+                                          'P_K': 25.33,
+                                          'P_Mu': 27.45,
+                                          'S_K': 0.59,
+                                          'S_Mu': 0.4,
+                                          'phi_max': 7.4,
+                                          'phi_mean': 5,
+                                          'phi_min': 10},
+                 'Paleocene (W of Shetland)': {'K_inf': 9.94,
+                                          'Mu_inf': 7.75,
+                                          'P_K': 6.32,
+                                          'P_Mu': 7.23,
+                                          'S_K': 0.5,
+                                          'S_Mu': 0.55,
+                                          'phi_max': 27.1,
+                                          'phi_mean': 17,
+                                          'phi_min': 36},
+                 'Rogliegend (Germany) Facies A': {'K_inf': 24.83,
+                                          'Mu_inf': 23.19,
+                                          'P_K': 24.28,
+                                          'P_Mu': 36.0,
+                                          'S_K': 0.69,
+                                          'S_Mu': 0.43,
+                                          'phi_max': 9.5,
+                                          'phi_mean': 6,
+                                          'phi_min': 15},
+                 'Rotliegend (Germany) Facies B': {'K_inf': 34.4,
+                                          'Mu_inf': 29.77,
+                                          'P_K': 29.02,
+                                          'P_Mu': 37.56,
+                                          'S_K': 0.66,
+                                          'S_Mu': 0.41,
+                                          'phi_max': 3.4,
+                                          'phi_mean': 1,
+                                          'phi_min': 5},
+                 'Rotliegend (S North Sea) Facies A': {'K_inf': 10.99,
+                                          'Mu_inf': 6.5,
+                                          'P_K': 9.82,
+                                          'P_Mu': 13.54,
+                                          'S_K': 0.64,
+                                          'S_Mu': 0.57,
+                                          'phi_max': 23.6,
+                                          'phi_mean': 20,
+                                          'phi_min': 28},
+                 'Rotliegend (S North Sea) Facies B': {'K_inf': 20.5,
+                                          'Mu_inf': 14.03,
+                                          'P_K': 9.99,
+                                          'P_Mu': 11.61,
+                                          'S_K': 0.6,
+                                          'S_Mu': 0.55,
+                                          'phi_max': 15.8,
+                                          'phi_mean': 11,
+                                          'phi_min': 19},
+                 'Rotliegend (S North Sea) Facies C': {'K_inf': 15.93,
+                                          'Mu_inf': 11.45,
+                                          'P_K': 22.12,
+                                          'P_Mu': 10.98,
+                                          'S_K': 0.56,
+                                          'S_Mu': 0.61,
+                                          'phi_max': 10.9,
+                                          'phi_mean': 8,
+                                          'phi_min': 11}}
 
 
 def macbeth_press(P, M_inf, S_M, P_M):
