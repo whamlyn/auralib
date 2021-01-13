@@ -3,7 +3,7 @@ auralib module containing Rock physics functions and related stuff...
 
 Author:   Wes Hamlyn
 Created:   3-Aug-2011
-Last Mod: 17-Aug-2016
+Last Mod: 13-Jan-2021
 
 """
 
