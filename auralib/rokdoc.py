@@ -8,6 +8,7 @@ Last Mod: 17-Aug-2016
 """
 
 import numpy as np
+import pandas as pd
 from scipy.interpolate import interp1d
 
 
@@ -288,6 +289,58 @@ def load_rokdoc_well_markers(infile):
     return markers
 
 
+def load_rokdoc_well_headers(hdrfile):
+    """
+    Read headers exported as an excel file from the RokDoc Edit Wells window.
+    """
+    
+    df = pd.read_excel(hdrfile, skiprows=4, header=0)
+    well_header_raw = df.to_dict()
+    
+    nwells = len(well_header_raw['Name'])
+    
+    well_header = {}
+    for i in range(nwells):
+        
+        cur_header = {}
+        cur_well = well_header_raw['Name'][i]
+        
+        for key in well_header_raw:
+            if key != 'Name':
+                cur_header[key] = well_header_raw[key][i]
+        
+        well_header[cur_well] = cur_header
+            
+    return well_header
+
+
+def load_rokdoc_crossplot(infile):
+    """
+    Load data from ascii file that was exported from a RokDoc crossplot.
+    """
+    
+    with open(infile, 'r') as fd:
+        buf = fd.readlines()
+    
+    x = []
+    y = []
+    z = []
+    a = []
+    for line in buf[3:]:
+        line = line.strip().split()
+        x.append(float(line[0]))
+        y.append(float(line[1]))
+        z.append(float(line[2]))
+        a.append(float(line[3]))
+        
+    x = np.array(x)
+    y = np.array(y)
+    z = np.array(z)
+    a = np.array(a)
+    
+    return x, y, z, a
+
+
 def read_rokdoc_fluidset(infile, other1='Other 1', other2='Other 2', other3='Other 3'):
     """
     Convenience function to load a fluid set exported from RokDoc to a Python
@@ -380,3 +433,62 @@ def read_rokdoc_fluidset(infile, other1='Other 1', other2='Other 2', other3='Oth
     # Done!
     
     return fset
+
+
+def load_rokdoc2d_attr(infile):
+    """
+    Function to read RokDoc 2D extracted attribute curves into numpy arrays.
+    Doesn't presently load attribute header info, only the trace number and
+    attrubute values.
+    """
+    
+    # read in raw ascii file
+    with open(infile, 'r') as fd:
+        buf = fd.readlines()
+    
+    # The below for loop iterates over each line in the file until it finds
+    # the attribute data block indicated by the line "START OF SECTION". Once
+    # it files that line, the following lines are parsed into trace and attr
+    # columns, converted to floats or np.nan values, and added to trc, and attr
+    # lists
+    in_data_block = False
+    trc = []
+    attr = []
+    for line in buf:
+        
+        # remove leading/trailing whitespace etc.
+        line = line.strip()
+        
+        # test for start of data block
+        if line[0:16] == 'START OF SECTION':
+            in_data_block = True
+            next
+        
+        # skip blank lines
+        elif len(line)==0:
+            next
+        
+        # test for end of data block
+        elif line == 'END OF SECTION: Default':
+            break
+        
+        # start parsing data values
+        elif in_data_block:
+            
+            line = line.split()
+            trc.append(float(line[0])) # trace number in 2D model
+            
+            # attribute value from 2D model
+            if line[1] == 'NULL': 
+                # deal with nulls properly
+                cur_attr = np.nan
+            else:
+                cur_attr = float(line[1])
+            
+            attr.append(cur_attr)
+    
+    # convert to numpy arrays
+    trc = np.array(trc)
+    attr = np.array(attr)
+    
+    return trc, attr

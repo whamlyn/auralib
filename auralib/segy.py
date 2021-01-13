@@ -36,6 +36,19 @@ def_thead = {'il':{'bpos':189,  'fmt':'l', 'nbyte':4},
              'idcode':{'bpos':29, 'fmt':'h', 'nbyte':2}
              }
 
+def print_fmtdef():
+    """
+    Convenience function to print a header format definition to the terminal
+    window for easy copying into a script
+    """
+    
+    print("def_thead = {'il':{'bpos':189,  'fmt':'l', 'nbyte':4},")
+    print("             'xl':{'bpos':193, 'fmt':'l', 'nbyte':4},")
+    print("             'cmpx':{'bpos':181, 'fmt':'l', 'nbyte':4},")
+    print("             'cmpy':{'bpos':185, 'fmt':'l', 'nbyte':4},")
+    print("             'offset':{'bpos':37, 'fmt':'l', 'nbyte':4},")
+    print("             'idcode':{'bpos':29, 'fmt':'h', 'nbyte':2}}")
+    
 
 class Segy(object):
     """
@@ -78,11 +91,8 @@ class Segy(object):
         
         import codecs
         
-        fd = open(self.filename, 'rb')
-        
-        buf = fd.read(3200)
-
-        fd.close()
+        with open(self.filename, 'rb') as fd:
+            buf = fd.read(3200)
 
         ebhead = ''
         for i in range(0, 3120, 80):
@@ -193,7 +203,7 @@ class Segy(object):
         # create a composite inline-crossline number by scaling the inline 
         # number by a multiple of 10 and then adding the crossline number
         mult10 = 10000000
-        ilxl0 = il0*mult10 + xl0
+        ilxl0 = np.array(il0, dtype='int64')*mult10 + xl0
         
         # make an initial guess at a trace
         tmin = 0
@@ -205,7 +215,8 @@ class Segy(object):
         ilxlg = -1
         while (ilxl0 != ilxlg) & (count<max_iter):
             count += 1
-            #print('iteration %i' % count)
+            if verbose:
+                print('iteration %i' % count)
             
             self.read_thead(tg)
             ilg = self.thead['il'][0]
@@ -240,8 +251,15 @@ class Segy(object):
             if verbose:
                 print('Using multi search...')
             
-            tnum_start = tg-multi
-            tnum_end = tg+multi
+            tnum_start = tg[0] - multi
+            tnum_end = tg[0] + multi
+            
+            if tnum_start < 0:
+                tnum_start = 0
+            
+            if tnum_end > self.num_traces:
+                tnum_end = self.num_traces
+                
             tnums = np.arange(tnum_start, tnum_end, 1)
             
             self.read_thead_multi(tnum_start, tnum_end)
@@ -322,10 +340,9 @@ class Segy(object):
     def read_tdata_multi(self, tr_start, tr_end, skip=1, verbose=0):
         """
         Read multiple sequential traces from a SEG-Y file.  This method is faster
-    		than read_trace_data() but is restricted to reading sequential traces.
+    	than read_trace_data() but is restricted to reading sequential traces.
+        
         Note:
-            - this is a development function that attempts to speed up the
-              unpacking step
             - tr_start is the first trace to be read (zero-indexed)
             - tr_end is the final trace to be read (inclusive)
             - This method starts at zero (e.g. first SEG-Y trace has 
@@ -763,13 +780,27 @@ class Segy(object):
         with open(self.filename, 'rb+') as fd:
             fd.seek(0, 0)
             for line in txt:
+                # make sure no line is longer than 80 characters, truncate if
+                # they are
+                if len(line)>80:
+                    line = line[0:80]
+                
+                # remove tabsm end of line characters, and that lines are all
+                # 80 characters long
                 line = '%-80s' % (line.replace('\t', '    ').replace('\n', ''))
+                
+                # make sure blank lines are written out as spaces
                 if len(line)==0:
                     line = '%80s' % (80*' ')
-                    
+                
+                # convert from ascii to ebcdic
                 line = codecs.encode(line, 'cp500')
                 
+                # write to segy
                 fd.write(line)
+        
+        # re-read the updated ebcdic header to Segy object ebcdic attribute
+        self._get_ebcdic_head()
     
     
     def write_bhead(self, def_bhead, bhead):
@@ -1362,13 +1393,13 @@ def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False,
                 # plot peak fill
                 if peak==True:
                     ax.fill_betweenx(t2, zeroval, trc2, where=trc2>zeroval, 
-                                     facecolor=pcolor, edgecolor=pcolor,
+                                     facecolor=pcolor, edgecolor=None,
                                      alpha=alpha)
                 
                 # plot trough fill
                 if trough==True:
                     ax.fill_betweenx(t2, zeroval, trc2, where=trc2<zeroval, 
-                                     facecolor=tcolor,  edgecolor=tcolor,
+                                     facecolor=tcolor,  edgecolor=None,
                                      alpha=alpha)
             if line == True:
                 ax.plot(trc, t, lcolor, lw=lw)
@@ -1376,7 +1407,7 @@ def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False,
 
 def plot_wigva2(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
           line=True, lw=0.25, lcolor='k', pcolor=[0.2, 0.2, 1.0],
-          tcolor=[1.0, 0.2, 0.2], alpha=0.5):
+          tcolor=[1.0, 0.2, 0.2], alpha=0.5, clipval=None):
     """
     Plot wiggle traces with variable area fill. 
     If using matplotlib version 2.1.0 and later, use this function.
@@ -1386,6 +1417,9 @@ def plot_wigva2(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False,
     ntrc, nsamp = tdata.shape
     
     norm = np.max(np.abs([np.nanmax(tdata), np.nanmin(tdata)]))
+    if clipval != None:
+        norm = clipval
+        
     for i in range(0, ntrc):
         
         zeroval = i + trcstart
@@ -1398,18 +1432,18 @@ def plot_wigva2(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False,
             #norm = max(abs([max(trc), min(trc)]))
             trc = trc/norm * excursion + zeroval
             
-            if (peak == True) | (trough == True):
+            if (peak==True) | (trough==True):
                                 
                 # plot peak fill
                 if peak==True:
                     ax.fill_betweenx(t, zeroval, trc, where=trc>zeroval, 
-                                     facecolor=pcolor, edgecolor=pcolor,
+                                     facecolor=pcolor, edgecolor=None,
                                      alpha=alpha, interpolate=True)
                 
                 # plot trough fill
                 if trough==True:
                     ax.fill_betweenx(t, zeroval, trc, where=trc<zeroval, 
-                                     facecolor=tcolor,  edgecolor=tcolor,
+                                     facecolor=tcolor,  edgecolor=None,
                                      alpha=alpha, interpolate=True)
             if line == True:
                 ax.plot(trc, t, lcolor, lw=lw)

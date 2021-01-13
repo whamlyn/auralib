@@ -14,7 +14,7 @@ from matplotlib.widgets import MultiCursor
 import numpy as np
 
 
-def t2xy(d1, d2, d3, norm=True):
+def t2xy(d1, d2, d3, norm=True, clipneg=False):
     
     c1 = np.array([0, 0])
     c2 = np.array([1, 0])
@@ -23,6 +23,12 @@ def t2xy(d1, d2, d3, norm=True):
     d1 = np.array(d1)
     d2 = np.array(d2)
     d3 = np.array(d3)
+    
+    # clip negative values
+    if clipneg:
+        for d in [d1, d2, d3]:
+            idx = np.nonzero(d<0)
+            d[idx] = 0.0
     
     # apply normalization
     if norm:
@@ -37,7 +43,7 @@ def t2xy(d1, d2, d3, norm=True):
     return px, py
 
 
-def tern(ax, lbls=['C1', 'C2', 'C3']):
+def tern(ax, lbls=['C1', 'C2', 'C3'], lw_ext=2, lw_int=1, fs_scalar=1.0):
     
     #  Corner points of triangular axes
     c1 = np.array([0, 0])
@@ -49,10 +55,10 @@ def tern(ax, lbls=['C1', 'C2', 'C3']):
                                   fc='white', ec=None, zorder=1)
     ax.add_patch(axbg_patch)
     
-    ax.plot([0, 1, 0.5, 0], [0, 0, 0.866, 0], 'k', lw=1.5, zorder=5)
-    ax.text(c1[0], c1[1], lbls[0], ha='right', va='top', fontsize=14)
-    ax.text(c2[0], c2[1], lbls[1], ha='left', va='top', fontsize=14)
-    ax.text(c3[0], c3[1], lbls[2], ha='center', va='bottom', fontsize=14)
+    ax.plot([0, 1, 0.5, 0], [0, 0, 0.866, 0], 'k', lw=lw_ext, zorder=5)
+    ax.text(c1[0], c1[1], lbls[0], ha='right', va='top', fontsize=14*fs_scalar)
+    ax.text(c2[0], c2[1], lbls[1], ha='left', va='top', fontsize=14*fs_scalar)
+    ax.text(c3[0], c3[1], lbls[2], ha='center', va='bottom', fontsize=14*fs_scalar)
     
     #  Draw gridlines
     for i in np.arange(0.1, 1, 0.1):
@@ -60,23 +66,20 @@ def tern(ax, lbls=['C1', 'C2', 'C3']):
         l1 = [i, i]
         l2 = 1.0 - i
         lx, ly = t2xy(l1, [0, l2], [l2, 0])
-        ax.plot(lx, ly, ':', lw=1.0, color=u'0.4', zorder=2)
-        ax.text(lx[-1]+0.01, ly[-1]-0.03, '%.2f' % i, ha='center', va='center', rotation=-60.0)
+        ax.plot(lx, ly, ':', lw=lw_int, color=u'0.4', zorder=2)
+        ax.text(lx[-1]+0.01, ly[-1]-0.035, '%.2f' % i, ha='center', va='center', rotation=-60.0, fontsize=10*fs_scalar)
 
         l1 = [i, i]
         l2 = 1.0 - i
         lx, ly = t2xy([0, l2], l1,  [l2, 0])
-        ax.plot(lx, ly, ':', lw=1.0, color=u'0.4', zorder=2)
-        ax.text(lx[0]+0.005, ly[0]+0.03, '%.2f' % i, ha='left', va='center', rotation=60.0)
+        ax.plot(lx, ly, ':', lw=lw_int, color=u'0.4', zorder=2)
+        ax.text(lx[0]+0.005, ly[0]+0.03, '%.2f' % i, ha='left', va='center', rotation=60.0, fontsize=10*fs_scalar)
 
         l1 = [i, i]
         l2 = 1.0 - i
         lx, ly = t2xy([0, l2], [l2, 0], l1)
-        ax.plot(lx, ly, ':', lw=1.0, color=u'0.4', zorder=2)
-        ax.text(lx[-1]-0.01, ly[0], '%.2f' % i, ha='right', va='center')
-    
-    
-    
+        ax.plot(lx, ly, ':', lw=lw_int, color=u'0.4', zorder=2)
+        ax.text(lx[-1]-0.01, ly[0], '%.2f' % i, ha='right', va='center', fontsize=10*fs_scalar)
     
     ax.set_xlim([-0.1, 1.1])
     ax.set_ylim([-0.1, 0.966])
@@ -94,17 +97,31 @@ def tern(ax, lbls=['C1', 'C2', 'C3']):
     
 
 def tern_scatter(ax, d1, d2, d3, s=25, color=None, marker=None, cmap=None, 
-                 lw=None, ec=None, alpha=1.0, label=None):
+                 lw=None, ec=None, alpha=1.0, vmin=None, vmax=None, label=None):
     
     #  Transform points from XY -> C1, C2, C3 coordinate system
     px, py = t2xy(d1, d2, d3)
     
     #  Plot points on
     pts = ax.scatter(px, py, s=s, c=color, marker=marker, cmap=cmap, lw=lw, 
-                     edgecolor=ec, alpha=alpha, label=label,
+                     edgecolor=ec, alpha=alpha, label=label, vmin=vmin, vmax=vmax,
                      zorder=10)
     
     return pts
+
+
+def tern_hist(ax, d1, d2, d3, nbins=75, cmap=plt.cm.hot_r):
+    
+    #  Transform points from XY -> C1, C2, C3 coordinate system
+    px, py = t2xy(d1, d2, d3)
+    
+    #  Plot points on
+    bins = np.linspace(0, 1, nbins)
+    hist, binx, biny, hdl = ax.hist2d(px, py, bins=[bins, bins], cmap=cmap, zorder=2)
+    
+    plt.colorbar(hdl)
+    
+    return hdl
 
 
 def tern_line(ax, d1, d2, d3, c=None, lw=None, ls=None, label=None):
@@ -114,6 +131,7 @@ def tern_line(ax, d1, d2, d3, c=None, lw=None, ls=None, label=None):
     
     #  Plot points on
     hdl = ax.plot(px, py, c=c, lw=lw, ls=ls, label=label, zorder=10)
+    ax.axes.set_ylabel('Count')
     
     return hdl
 
@@ -173,6 +191,62 @@ def radar(ax, data, data_names, lw=1.0, color='k', ls='-', marker=None, label=No
 
 
 
+def plot_heatmap(ax, hmap, xticklabels, yticklabels, xlabel=None, ylabel=None, 
+                 zlabel=None, cmap=None, labels=True):
+    """
+    hmap = 2d numpy array; 1st dim = xaxis, 2nd dim = yaxis
+    xticklabels = array of labels for x axis ticks
+    yticklabels = array of labels for y axis ticks
+    ax = axis to plot heatmap
+    """
+    
+    xticklabels = np.array(xticklabels, dtype='str').tolist()
+    yticklabels = np.array(yticklabels, dtype='str').tolist()
+
+    nx = len(xticklabels)
+    ny = len(yticklabels)
+    
+    hmap = hmap.T
+    idx_max = np.unravel_index(hmap.argmax(), hmap.shape)
+    
+    if cmap == None:
+        cmap = plt.cm.magma
+        
+    im4 = ax.imshow(hmap, cmap=cmap, origin='lower')
+    mid = (hmap.max() + hmap.min()) / 2
+    if labels == True:
+        for i in range(ny):
+            for j in range(nx):
+                lbl = '%.3f' % hmap[i, j]
+                # plot the cell labels as either a light color or dark color
+                if hmap[i, j] > mid:
+                    txt_color = u'0.1'
+                else:
+                    txt_color= u'0.9'
+                
+                # plot the label in the cell with the max value as bold font
+                if (i==idx_max[0]) & (j==idx_max[1]):
+                    fontweight = 'bold'
+                else:
+                    fontweight = 'normal'
+                
+                ax.text(j, i, lbl, ha='center', va='center', c=txt_color, 
+                        fontweight=fontweight)
+            
+    cax = plt.colorbar(im4, ax=ax)
+    cax.ax.set_ylabel(zlabel)
+    
+    ax.set_xticks(np.arange(0, nx, 1))
+    ax.set_yticks(np.arange(0, ny, 1))
+    
+    ax.set_xticklabels(xticklabels, rotation=45, ha='right')
+    ax.set_yticklabels(yticklabels)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_aspect('auto')
+    ax.grid(False)
+
+
 def plot_filled_logs(ax, logs, z, fill_colors, labels, lw=1.0, alpha=0.3):
     """
     Plot a series of logs using fill colors between each log. Designed to show
@@ -208,6 +282,25 @@ def plot_filled_logs(ax, logs, z, fill_colors, labels, lw=1.0, alpha=0.3):
         logsum = logsum + logs[i]
 
 
+def plot_rokdoc_markers(markers, well, axes, domain='md'):
+    """
+    Convenience function to plot RokDoc well markers in log tracks.
+    """
+    
+    count = 0
+    for ax in axes:
+        xlim = ax.get_xlim()
+        
+        for name in markers[well].keys():
+            z = markers[well][name][domain]
+            ax.plot(xlim, [z, z], 'b', lw=1)
+            if count == 0:
+                name_x = (xlim[1]-xlim[0])*0.05 + xlim[0]
+                ax.text(name_x, z, name, c='b', ha='left', va='bottom')
+        
+        count += 1
+
+
 
 def format_log_axes(axes, ylabel):
     """
@@ -226,6 +319,7 @@ def format_log_axes(axes, ylabel):
     axes[-1].set_ylabel(ylabel)
     axes[-1].yaxis.set_ticks_position('right')
     axes[-1].yaxis.set_label_position('right')\
+        
     
 def make_wellview(ntrack=5, figsize=(5, 5)):
     """

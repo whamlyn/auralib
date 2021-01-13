@@ -14,6 +14,7 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 #from ._utils import _maybe_get_pandas_wrapper
 
+
 def apply_filter(tdata, filt):
     """
     Convenience function to apply a frequency domain filter operator to time
@@ -214,10 +215,10 @@ def phaserot(data, deg):
     from scipy.signal import hilbert
     deg = float(deg)
     
-    deg = deg*np.pi/180.0
+    rad = np.deg2rad(deg)
     datah = hilbert(data)
     datah = np.imag(datah)
-    data = np.cos(deg)*data - np.sin(deg)*datah
+    data = np.cos(rad)*data - np.sin(rad)*datah
     
     return data
 

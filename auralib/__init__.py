@@ -23,6 +23,7 @@ limitations under the License.
 from . import avo
 from . import cmaps
 from . import filt
+from . import gm
 from . import las
 from . import pp
 from . import plot
@@ -31,8 +32,12 @@ from . import rokdoc
 from . import rp
 from . import segy
 from . import segyidx
+from . import seisio
 from . import syn
+from . import tlapse
 from . import utils
 from . import well
+from . import welldb
+from . import win
 from . import wvlt
 
