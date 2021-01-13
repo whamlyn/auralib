@@ -35,7 +35,6 @@ from . import seisio
 from . import syn
 from . import tlapse
 from . import utils
-from . import well
 from . import welldb
 from . import win
 from . import wvlt
