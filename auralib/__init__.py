@@ -27,7 +27,6 @@ from . import gm
 from . import las
 from . import pp
 from . import plot
-from . import proj
 from . import rokdoc
 from . import rp
 from . import segy
