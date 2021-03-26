@@ -14,12 +14,12 @@ import auralib as aura
 from scipy.interpolate import interp1d
 
 # load vp-vs-rho logs
-infile = r'C:\Users\wesha\Dropbox\data\well.las'
+infile = r'D:\SERVICE\Tallman\04_RokDoc\exports\las\111041205125W300_MD.las'
 
 buf = aura.las.LASReader(infile)
 md = buf.curves['DEPT']
-vp = 1e6/buf.curves['AC_GGG']
-rho = buf.curves['DEN'] * 0.001
+vp = buf.curves['Vp_SYN']
+rho = buf.curves['Rho_SYN']
 
 # 1) Strip leading and trailing nulls from Vp and Rho logs
 
@@ -27,8 +27,8 @@ leading_vp = np.argmin(np.isnan(vp))
 leading_vp_idx = np.arange(leading_vp)
 vp1 = np.delete(vp, leading_vp_idx)
 
-trailing_vp = np.argmin(np.isnan(vp[::-1]))
-trailing_vp_idx = np.arange(-trailing_vp, 0)
+trailing_vp = np.argmin(~np.isnan(vp1))
+trailing_vp_idx = np.arange(trailing_vp, len(vp1))
 vp1 = np.delete(vp1, trailing_vp_idx)
 vp1z = np.delete(np.delete(md, leading_vp_idx), trailing_vp_idx)
 
@@ -36,8 +36,8 @@ leading_rho = np.argmin(np.isnan(rho))
 leading_rho_idx = np.arange(leading_rho)
 rho1 = np.delete(rho, leading_rho_idx)
 
-trailing_rho = np.argmin(np.isnan(rho[::-1]))
-trailing_rho_idx = np.arange(-trailing_rho, 0)
+trailing_rho = np.argmin(~np.isnan(rho1))
+trailing_rho_idx = np.arange(trailing_rho, 0)
 rho1 = np.delete(rho1, trailing_rho_idx)
 rho1z = np.delete(np.delete(md, leading_rho_idx), trailing_rho_idx)
 
@@ -143,29 +143,28 @@ synth = np.convolve(wvlt_a, rpp_syn_sm_t, mode='same')
 
 # 8) Read in a trace from SEG-Y file for time-depth calibration
 
-sgyfile = r'C:\Users\wesha\Dropbox\data\SEGY\seismic.sgy'
-def_thead = {'il':{'bpos':9,  'fmt':'l', 'nbyte':4},
-             'xl':{'bpos':13, 'fmt':'l', 'nbyte':4},
-             'cmpx':{'bpos':81, 'fmt':'f', 'nbyte':4},
-             'cmpy':{'bpos':85, 'fmt':'f', 'nbyte':4}}
+sgyfile = r'D:\SERVICE\Tallman\01_OriginalData\02_Seismic\20201211_AbsoluteRepro\1838_Tangleflags19-1_3D_2020\pstm\TANGLEFLAGS19-1_3D_2020.sgy'
+def_thead = {'il':{'bpos':17,  'fmt':'l', 'nbyte':4},
+             'xl':{'bpos':21, 'fmt':'l', 'nbyte':4},
+             'cmpx':{'bpos':181, 'fmt':'f', 'nbyte':4},
+             'cmpy':{'bpos':185, 'fmt':'f', 'nbyte':4}}
 
 sgybuf = aura.segy.Segy(sgyfile, def_thead)
-sgybuf.fmt_str = '>f'
 
-trcnum = sgybuf.get_ilxl(100, 100)[0]
+trcnum = sgybuf.get_ilxl(244, 258)[0]
 tdata = sgybuf.read_tdata(trcnum)
 tdata_twt = np.arange(sgybuf.bhead['num_samp'])*sgybuf.bhead['samp_rate']*1e-6
 
 
 # 9)  Calibrate time-depth relationship
 
-well_twt_shift = 0.242
+well_twt_shift = 0.276
 twt_dt = twt_dt + well_twt_shift
 twt_dz = twt_dz + well_twt_shift
 
 # set to True to perform stretch-squeeze
-twt_orig = np.array([0.404, 0.4990, 0.519, 0.563, 0.640]) # original twt points
-twt_new =  np.array([0.397, 0.5005, 0.518, 0.560, 0.650]) # after stretch squeeze
+twt_orig = np.array([0.384, 0.492, 0.574]) # original twt points
+twt_new =  np.array([0.385, 0.500, 0.585]) # after stretch squeeze
 
 if True:
 
@@ -217,7 +216,7 @@ aura.syn.plot_wigva(ax[3], wvlt_a, wvlt_t2, repeat=1)
 ax[3].set_xlabel('Wavelet\n(amplitude)')
 
 # plot synthetic trace (replicated several times)
-aura.syn.plot_wigva(ax[4], synth, twt_dt, repeat=5)
+aura.syn.plot_wigva(ax[4], synth, twt_dt, repeat=5, excursion=2)
 xlim = ax[4].get_xlim()
 for each in twt_new:
     ax[4].plot(xlim, [twt_orig, twt_orig], lw=2)
@@ -225,7 +224,7 @@ ax[4].set_xlim(xlim)
 ax[4].set_xlabel('Synthetic\n(amplitude)')
 
 # plot seismic trace (replicated several times)
-aura.syn.plot_wigva(ax[5], tdata, tdata_twt, repeat=5)
+aura.syn.plot_wigva(ax[5], tdata, tdata_twt, repeat=5, excursion=2)
 xlim = ax[5].get_xlim()
 for each in twt_new:
     ax[5].plot(xlim, [twt_new, twt_new], lw=2)

@@ -19,6 +19,7 @@ infile = r'D:\SERVICE\Tallman\04_RokDoc\exports\las\111041205125W300_MD.las'
 buf = aura.las.LASReader(infile)
 md = buf.curves['DEPT']
 vp = buf.curves['Vp_SYN']
+vs = buf.curves['Vs_SYN']
 rho = buf.curves['Rho_SYN']
 
 # 1) Strip leading and trailing nulls from Vp and Rho logs
@@ -31,6 +32,17 @@ trailing_vp = np.argmin(~np.isnan(vp1))
 trailing_vp_idx = np.arange(trailing_vp, len(vp1))
 vp1 = np.delete(vp1, trailing_vp_idx)
 vp1z = np.delete(np.delete(md, leading_vp_idx), trailing_vp_idx)
+
+
+leading_vs = np.argmin(np.isnan(vs))
+leading_vs_idx = np.arange(leading_vs)
+vs1 = np.delete(vs, leading_vs_idx)
+
+trailing_vs = np.argmin(~np.isnan(vs1))
+trailing_vs_idx = np.arange(trailing_vs, len(vp1))
+vs1 = np.delete(vs1, trailing_vs_idx)
+vs1z = np.delete(np.delete(md, leading_vs_idx), trailing_vs_idx)
+
 
 leading_rho = np.argmin(np.isnan(rho))
 leading_rho_idx = np.arange(leading_rho)
@@ -55,26 +67,20 @@ z = np.arange(z_min, z_max+dz, dz)
 fvp = interp1d(vp1z[~np.isnan(vp1)], vp1[~np.isnan(vp1)], kind='linear',
                bounds_error=False, fill_value=(vp1[0], vp1[-1]))
 
+fvs = interp1d(vs1z[~np.isnan(vs1)], vs1[~np.isnan(vs1)], kind='linear',
+               bounds_error=False, fill_value=(vs1[0], vs1[-1]))
+
 frho= interp1d(rho1z[~np.isnan(rho1)], rho1[~np.isnan(rho1)], kind='linear',
                bounds_error=False, fill_value=(rho1[0], rho1[-1]))
 
 vp_syn = fvp(z)
+vs_syn = fvs(z)
 rho_syn = frho(z)
 
-ai_syn = vp_syn*rho_syn
-sm_len_samp = 51
-ai_syn_sm = aura.utils.smooth_log(ai_syn, sm_len_samp)
-
-# do some despiking of the AI log
-if False:
-    spike_tol = 1000
-    idx = np.nonzero((ai_syn > ai_syn_sm+spike_tol) | (ai_syn < ai_syn_sm-spike_tol))
-    ai_syn[idx] = np.nan
-
-    f = interp1d(z[~np.isnan(ai_syn)], ai_syn[~np.isnan(ai_syn)], kind='linear',
-                 bounds_error=False, fill_value='extrapolate')
-    ai_syn = f(z)
-    ai_syn_sm = aura.utils.smooth_log(ai_syn, sm_len_samp)
+sm_len_samp = 31
+vp_syn_sm = aura.utils.smooth_log(vp_syn, sm_len_samp)
+vs_syn_sm = aura.utils.smooth_log(vs_syn, sm_len_samp)
+rho_syn_sm = aura.utils.smooth_log(rho_syn, sm_len_samp)
 
 
 # 3) Calculate the initial time-depth transform from the vp_syn log
@@ -110,36 +116,49 @@ class Depth2Time():
 d2t = Depth2Time(twt_dz, twt_dt)
 
 vp_syn_t  = d2t.conv(vp_syn)
+vs_syn_t = d2t.conv(vs_syn)
 rho_syn_t = d2t.conv(rho_syn)
-ai_syn_t  = d2t.conv(ai_syn)
-ai_syn_sm_t  = d2t.conv(ai_syn_sm)
-
+vp_syn_sm_t  = d2t.conv(vp_syn_sm)
+vs_syn_sm_t = d2t.conv(vs_syn_sm)
+rho_syn_sm_t = d2t.conv(rho_syn_sm)
 
 # 5) Compute zero offset reflection coefficients and add a zero to the start of
 #    the reflectivity arrays to account for no reflection at the top of the
 #    first layer.
 
-rpp_syn_sm_t = (ai_syn_sm_t[1:] - ai_syn_sm_t[:-1])/(ai_syn_sm_t[1:] + ai_syn_sm_t[:-1])
-rpp_syn_sm_t = np.hstack([0, rpp_syn_sm_t])
+theta = np.arange(0.0, 46.0, 5)
+rpp_ar = []
+for angle in theta:
+   rpp_tmp = aura.avo.Rpp_akirichards(angle, vp_syn_sm_t, vs_syn_sm_t, rho_syn_sm_t)
+   rpp_ar.append(rpp_tmp)
+
+rpp_ar = np.array(rpp_ar)
+   
+#rpp_syn_sm_t = (ai_syn_sm_t[1:] - ai_syn_sm_t[:-1])/(ai_syn_sm_t[1:] + ai_syn_sm_t[:-1])
+#rpp_syn_sm_t = np.hstack([0, rpp_syn_sm_t])
 
 
 # 6) Create a wavelet
-f1 = 5.0
+f1 = 6.0
 f2 = 12.0
 f3 = 105.0
 f4 = 125.0
 phase = 0.0
-wvlt_length_samp = 75
+wvlt_length_samp = 101
 wvlt_length_sec = (wvlt_length_samp-1)*dt
 wvlt_t, wvlt_a = aura.wvlt.wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length_sec)
 
-wvlt_a = wvlt_a * aura.win.cosine(wvlt_length_samp, 10)
-
+wvlt_a = wvlt_a * aura.win.cosine(wvlt_length_samp, int(wvlt_length_samp*0.1))
 
 # 7) Convolve wavelet with reflectivity series
 
-synth = np.convolve(wvlt_a, rpp_syn_sm_t, mode='same')
-
+nt, ns = rpp_ar.shape
+synth = []
+for i in range(nt):
+    syn_tmp = np.convolve(wvlt_a, rpp_ar[i, :], mode='same')
+    syn_tmp = np.hstack([0, syn_tmp])
+    synth.append(syn_tmp)
+synth = np.array(synth)
 
 # 9)  Calibrate time-depth relationship
 
@@ -161,21 +180,22 @@ for i in range(1, nc):
     ax.append(plt.subplot2grid((nr, nc), (0, i), sharey=ax[0]))
 
 # plot original AI logs in TWT but sampled in Depth
-ax[0].plot(ai_syn, twt_dz, c='k', lw=0.75)
-ax[0].plot(ai_syn_sm, twt_dz, c='r', lw=2)
+ax[0].plot(vp_syn, twt_dz, c='k', lw=0.75)
+ax[0].step(vp_syn_sm_t, twt_dt, where='pre', c='r', lw=2)
 #ax[0].set_xlim(3000, 10000)
-ax[0].set_xlabel('AI\n(m/s*g/cc)')
+ax[0].set_xlabel('Vp\n(m/s)')
 
 # plot upscaled AI log sampled in TWT
-ax[1].step(ai_syn_sm_t, twt_dt, where='pre', c='r')
+ax[1].plot(vp_syn, twt_dz, c='k', lw=0.75)
+ax[1].step(vp_syn_sm_t, twt_dt, where='pre', c='r', lw=2)
 #ax[1].set_xlim(3000, 10000)
-ax[1].set_xlabel('AI\n(m/s*g/cc)')
+ax[1].set_xlabel('Vs\n(m/s)')
 
 # plot reflectivity series
-ax[2].hlines(twt_dt, 0.0, rpp_syn_sm_t, 'r')
-ax[2].plot(np.zeros_like(twt_dt), twt_dt, 'r')
-ax[2].set_xlim(-0.5, 0.5)
-ax[2].set_xlabel('Refl. Coeff.\n(unitless)')
+ax[2].plot(rho_syn, twt_dz, c='k', lw=0.75)
+ax[2].step(rho_syn_sm_t, twt_dt, where='pre', c='r', lw=2)
+#ax[2].set_xlim(3000, 10000)
+ax[2].set_xlabel('Density\n(g/cc)')
 
 # plot wavelet
 wvlt_t2 = wvlt_t + 0.4
@@ -183,8 +203,22 @@ aura.syn.plot_wigva(ax[3], wvlt_a, wvlt_t2, repeat=1)
 ax[3].set_xlabel('Wavelet\n(amplitude)')
 
 # plot synthetic trace (replicated several times)
-aura.syn.plot_wigva(ax[4], synth, twt_dt, repeat=5)
-ax[4].set_xlabel('Synthetic\n(amplitude)')
+namp = np.max(np.abs(synth))
+synthn = synth/0.05
+for i, angle in enumerate(theta):
+    trc = synthn[i]
+    f = interp1d(twt_dt, trc, kind='cubic')
+    twt_dt2 = np.linspace(twt_dt[0], twt_dt[-1], len(twt_dt)*10)
+    trc = f(twt_dt2)
+    
+    trc = 1*trc + angle
+    ax[4].fill_betweenx(twt_dt2, angle, trc, where=trc>=angle, fc='blue',
+                        alpha=0.3, interpolate=True)
+    ax[4].fill_betweenx(twt_dt2, angle, trc, where=trc<=angle, fc='red',
+                        alpha=0.3, interpolate=True)
+    ax[4].plot(trc, twt_dt2, 'k', lw=0.25)
+    
+ax[4].set_xlabel('Synthetic Gather\n(Indicence Angle)')
 
 
 for each in ax:
@@ -195,3 +229,9 @@ aura.plot.format_log_axes(ax, '')
 
 curs = MultiCursor(fig.canvas, ax, horizOn=True, vertOn=False, c='k', ls='-', lw=1)
 plt.show()
+
+
+
+# pt = plt.ginput()
+# avo_twti = int(np.round((pt[0][1]-well_twt_shift)/dt))
+# avo_twt = wvo_twti*pt

@@ -14,7 +14,7 @@ import os
 import matplotlib.pyplot as plt
 import sys
 import codecs
-
+from copy import deepcopy
 
 
 #  below are example of the Python dictionary structure used to define binary
@@ -59,10 +59,10 @@ class Segy(object):
         """
         Constructor for SEG-Y class.
         """
-
+        
         self.filename = filename
-        self.def_bhead = def_bhead
-        self.def_thead = def_thead
+        self.def_thead = deepcopy(def_thead)
+        self.def_bhead = deepcopy(def_bhead)
         self.bhead = {}
         self.thead = {}
         self.ebcdic = ' '
