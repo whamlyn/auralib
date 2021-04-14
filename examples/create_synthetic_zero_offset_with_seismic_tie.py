@@ -14,7 +14,7 @@ import auralib as aura
 from scipy.interpolate import interp1d
 
 # load vp-vs-rho logs
-infile = r'D:\SERVICE\Tallman\04_RokDoc\exports\las\111041205125W300_MD.las'
+infile = r'C:\data\example.las'
 
 buf = aura.las.LASReader(infile)
 md = buf.curves['DEPT']
