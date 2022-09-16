@@ -125,6 +125,7 @@ def apply_match_filter(a, d2):
         d2m = trace from slave survey after applying matching filter operator
     """
     
+    
     npts = len(a)
     A = a.reshape([-1, 1])
     
