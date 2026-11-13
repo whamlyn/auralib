@@ -23,19 +23,27 @@ limitations under the License.
 from . import avo
 from . import cmaps
 from . import filt
+from . import filt2d
+from . import fluidprops
+from . import inv
 from . import gm
 from . import las
+from . import petrel
 from . import pp
 from . import plot
+from . import prod
 from . import rokdoc
 from . import rp
+from . import segb
 from . import segy
 from . import segyidx
 from . import seisio
 from . import syn
 from . import tlapse
 from . import utils
+from . import well
 from . import welldb
+from . import well_log_viewer
 from . import win
 from . import wvlt
 

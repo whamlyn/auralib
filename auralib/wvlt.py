@@ -50,7 +50,7 @@ def ricker(cfreq, phase, dt, wvlt_length):
     return t, wvlt
 
 
-def wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length):
+def wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length, normalize=True):
     """
     Calculate a trapezoidal bandpass wavelet
     
@@ -65,6 +65,7 @@ def wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length):
     phase: wavelet phase in degrees
     dt: sample rate in seconds
     wvlt_length: length of wavelet in seconds
+    normalize: Normalize wavelet to amplitude of 1
     """
     
     from numpy.fft import fft, ifft, fftfreq, fftshift, ifftshift
@@ -115,7 +116,9 @@ def wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length):
     # Convert filter to time-domain wavelet
     wvlt = fftshift(ifft(Af))
     wvlt = np.real(wvlt)
-    wvlt = wvlt/np.max(np.abs(wvlt)) # normalize wavelet by peak amplitude
+    
+    if normalize:
+        wvlt = wvlt/np.max(np.abs(wvlt)) # normalize wavelet by peak amplitude
     
     # Generate array of wavelet times
     t = np.linspace(-wvlt_length*0.5, wvlt_length*0.5, nsamp)
@@ -129,6 +132,20 @@ def wvlt_bpass(f1, f2, f3, f4, phase, dt, wvlt_length):
         wvlt = np.cos(phase)*wvlt - np.sin(phase)*wvlth
     
     return t, wvlt
+
+
+def wvlt_gabor(sigma, k, normalize=True):
+    """
+    Calculate a Gabor  wavelet
+    
+    Usage:
+    ------
+
+    """
+    
+    pass
+    
+    return None
 
 
 def extract_wavelet(a, dt, wlen_t, sm_freq=10.0, phase=0.0):
@@ -171,12 +188,265 @@ def extract_wavelet(a, dt, wlen_t, sm_freq=10.0, phase=0.0):
     wa = np.fft.ifft(np.fft.ifftshift(wf)).real
     wa = np.fft.fftshift(wa)
     
+    wa = wa/np.max(wa)
+    
     # make wavelet time sample array
-    wt = np.arange(len(wa))*dt
-    wt = wt - np.mean(wt)
+    ns = len(wa)
+    t0 = np.round(ns/2)*dt
+    wt = np.arange(ns)*dt
+    wt = wt - t0
     
     if phase!=0.0:
         wa = aura.filt.phaserot(wa, phase)
     
     return wt, wa
 
+
+def statistical_wavelet(
+    data,
+    dt,
+    wavelet_length=0.128,
+    tmin=None,
+    tmax=None,
+    phase=0.0,
+    smooth_hz=5.0,
+    taper=True,
+    normalize=True,
+):
+    """
+    Estimate a statistical seismic wavelet from a 2D array of traces.
+
+    The wavelet amplitude spectrum is estimated from the average power
+    spectrum of the seismic traces, assuming the reflectivity spectrum
+    is approximately white.
+
+    Parameters
+    ----------
+    data : array_like
+        Seismic data with shape:
+
+            (n_traces, n_samples)
+
+    dt : float
+        Sample interval in seconds.
+
+    wavelet_length : float, optional
+        Desired output wavelet length in seconds.
+        Default is 0.128 s.
+
+    tmin : float or None, optional
+        Start time of the seismic estimation window in seconds.
+        If None, estimation starts at the first sample.
+
+    tmax : float or None, optional
+        End time of the seismic estimation window in seconds.
+        If None, estimation continues to the final sample.
+
+    phase : float, optional
+        Constant wavelet phase in degrees.
+
+        phase = 0
+            zero-phase wavelet
+
+        phase = 90
+            +90 degree constant-phase wavelet
+
+        Default is 0 degrees.
+
+    smooth_hz : float or None, optional
+        Width of spectral smoothing window in Hz.
+        Set to None or 0 to disable smoothing.
+        Default is 5 Hz.
+
+    taper : bool, optional
+        Apply a Hann taper to each seismic trace before calculating
+        its spectrum. Default is True.
+
+    normalize : bool, optional
+        Normalize output wavelet to maximum absolute amplitude of 1.
+        Default is True.
+
+    Returns
+    -------
+    wavelet : ndarray
+        Estimated time-domain wavelet.
+
+    tw : ndarray
+        Wavelet time axis in seconds, centered at zero.
+
+    freq : ndarray
+        Positive frequency axis used for spectral estimation.
+
+    amplitude_spectrum : ndarray
+        Estimated wavelet amplitude spectrum.
+
+    Notes
+    -----
+    The method assumes:
+
+        seismic = wavelet * reflectivity
+
+    and that the ensemble-averaged reflectivity power spectrum is
+    approximately white.
+
+    Consequently:
+
+        |W(f)| ~= sqrt(mean(|S_i(f)|**2))
+
+    A constant phase is then applied before transforming back into
+    the time domain.
+    """
+
+    data = np.asarray(data, dtype=float)
+
+    if data.ndim != 2:
+        raise ValueError(
+            "data must be a 2D array with shape "
+            "(n_traces, n_samples)"
+        )
+
+    ntraces, nsamples = data.shape
+
+    if dt <= 0:
+        raise ValueError("dt must be greater than zero.")
+
+    # -------------------------------------------------------------
+    # Select estimation time window
+    # -------------------------------------------------------------
+
+    i0 = 0 if tmin is None else int(round(tmin / dt))
+    i1 = nsamples if tmax is None else int(round(tmax / dt))
+
+    i0 = np.clip(i0, 0, nsamples - 1)
+    i1 = np.clip(i1, i0 + 1, nsamples)
+
+    d = data[:, i0:i1].copy()
+
+    # -------------------------------------------------------------
+    # Remove DC component from each trace
+    # -------------------------------------------------------------
+
+    d -= np.nanmean(d, axis=1, keepdims=True)
+
+    # Replace remaining NaNs
+    d = np.nan_to_num(d)
+
+    nwin = d.shape[1]
+
+    # -------------------------------------------------------------
+    # Apply temporal taper
+    # -------------------------------------------------------------
+
+    if taper:
+        win = np.hanning(nwin)
+        d *= win[None, :]
+
+    # -------------------------------------------------------------
+    # FFT length
+    #
+    # Zero padding improves spectral sampling.
+    # -------------------------------------------------------------
+
+    nfft = 1 << int(np.ceil(np.log2(max(nwin, 256))))
+
+    spectra = np.fft.rfft(d, n=nfft, axis=1)
+
+    freq = np.fft.rfftfreq(nfft, dt)
+
+    # -------------------------------------------------------------
+    # Average POWER spectrum
+    # -------------------------------------------------------------
+
+    power = np.mean(np.abs(spectra) ** 2, axis=0)
+
+    # Wavelet amplitude spectrum
+    amp = np.sqrt(power)
+
+    # -------------------------------------------------------------
+    # Smooth amplitude spectrum
+    # -------------------------------------------------------------
+
+    if smooth_hz is not None and smooth_hz > 0:
+
+        df = freq[1] - freq[0]
+
+        nsm = int(round(smooth_hz / df))
+
+        if nsm > 1:
+
+            # Prefer odd length
+            if nsm % 2 == 0:
+                nsm += 1
+
+            kernel = np.ones(nsm) / nsm
+
+            amp = np.convolve(
+                amp,
+                kernel,
+                mode="same"
+            )
+
+    # -------------------------------------------------------------
+    # Apply constant phase
+    # -------------------------------------------------------------
+
+    phi = np.deg2rad(phase)
+
+    spectrum = amp * np.exp(1j * phi)
+
+    # DC and Nyquist components should remain real
+    spectrum[0] = amp[0]
+
+    if nfft % 2 == 0:
+        spectrum[-1] = amp[-1]
+
+    # -------------------------------------------------------------
+    # Transform to time domain
+    # -------------------------------------------------------------
+
+    w = np.fft.irfft(
+        spectrum,
+        n=nfft
+    )
+
+    # Put zero lag in the center
+    w = np.fft.fftshift(w)
+
+    # -------------------------------------------------------------
+    # Extract requested wavelet length
+    # -------------------------------------------------------------
+
+    nw = int(round(wavelet_length / dt))
+
+    # Prefer an odd number of samples so zero time exists exactly
+    if nw % 2 == 0:
+        nw += 1
+
+    nw = min(nw, nfft - 1)
+
+    half = nw // 2
+
+    center = nfft // 2
+
+    wavelet = w[
+        center - half:
+        center + half + 1
+    ]
+
+    tw = (
+        np.arange(wavelet.size)
+        - wavelet.size // 2
+    ) * dt
+
+    # -------------------------------------------------------------
+    # Normalize
+    # -------------------------------------------------------------
+
+    if normalize:
+
+        amax = np.max(np.abs(wavelet))
+
+        if amax > 0:
+            wavelet /= amax
+
+    return tw, wavelet, freq, amp

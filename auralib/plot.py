@@ -11,7 +11,10 @@ Last Mod: 20-Aug-2016
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.widgets import MultiCursor
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
 import numpy as np
+from scipy.interpolate import interp1d
 
 
 def t2xy(d1, d2, d3, norm=True, clipneg=False):
@@ -136,21 +139,7 @@ def tern_line(ax, d1, d2, d3, c=None, lw=None, ls=None, label=None):
     return hdl
 
 
-def plot_blocky(ax, data, zdata, linespec='b-', lw=1):
-    """
-    Convenience function for plotting a blocky log.
-    
-    Ensure that the zdata log has 1 more sample than the data log.
-    """
-    
-    for i in range(0, len(data)):
-        ax.plot([data[i], data[i]], [zdata[i], zdata[i+1]], linespec, lw=lw)
-        
-    for i in range(1, len(data)):
-        ax.plot([data[i-1], data[i]], [zdata[i], zdata[i]], linespec, lw=lw)
-
-
-def radar(ax, data, data_names, lw=1.0, color='k', ls='-', marker=None, label=None):
+def radar(ax, data, data_names, *args, **kwargs):
     """
     function to produce a radar plot
     
@@ -183,10 +172,10 @@ def radar(ax, data, data_names, lw=1.0, color='k', ls='-', marker=None, label=No
     plt.yticks(color="grey", size=8)
      
     # Plot data
-    ax.plot(angles, data, lw=lw, color=color, ls=ls, marker=marker, label=label)
+    ax.plot(angles, data, *args, **kwargs) #lw=lw, color=color, ls=ls, marker=marker, label=label)
     
     # Fill area
-    ax.fill(angles, data, color=color, alpha=0.1)
+    ax.fill(angles, data, *args, **kwargs)
     ax.grid(True, ls=':')
 
 
@@ -247,6 +236,233 @@ def plot_heatmap(ax, hmap, xticklabels, yticklabels, xlabel=None, ylabel=None,
     ax.grid(False)
 
 
+
+def plot_rokdoc_markers(markers, well, axes, domain='md'):
+    """
+    Convenience function to plot RokDoc well markers in log tracks.
+    """
+    
+    count = 0
+    for ax in axes:
+        xlim = ax.get_xlim()
+        
+        for name in markers[well].keys():
+            z = markers[well][name][domain]
+            ax.plot(xlim, [z, z], 'b', lw=1)
+            if count == 0:
+                name_x = (xlim[1]-xlim[0])*0.05 + xlim[0]
+                ax.text(name_x, z, name, c='b', ha='left', va='bottom')
+        
+        count += 1
+
+
+def add_log_tracks(fig, ntrack):
+    """
+    Add multiple axes to a figure for use as log tracks
+    """
+    
+    plt.figure(fig.number)
+    
+    ax = [plt.subplot2grid((1, ntrack), (0, 0))]
+    for i in range(1, ntrack):
+        ax.append(plt.subplot2grid((1, ntrack), (0, i), sharey=ax[0]))
+    
+    return ax
+
+
+def format_log_axes(axes, ylabel):
+    """
+    Function to format a series of axes displaying simple log curves.
+    """
+
+    
+    for ax in axes:
+        ax.xaxis.set_ticks_position('top')
+        ax.xaxis.set_label_position('top')
+        ax.minorticks_on() 
+        ax.grid(which='both', ls=':')
+        ax.tick_params(axis="x", which='both', direction="out")
+        ax.tick_params(axis="y", which='both', direction="in")
+        
+    for ax in axes[1:-1]:
+        plt.setp(ax.get_yticklabels(), visible=False)
+        ax.tick_params(axis="x", which='both', direction="out")
+        ax.tick_params(axis="y", which='both', direction="in")
+        
+    axes[0].set_ylabel(ylabel, weight='bold')
+    axes[-1].set_ylabel(ylabel, weight='bold')
+    axes[-1].yaxis.set_ticks_position('right')
+    axes[-1].yaxis.set_label_position('right')
+    axes[-1].tick_params(axis="x", direction="out")
+    axes[-1].tick_params(axis="y", direction="in")
+        
+    
+def make_wellview(ntrack=5, figsize=(5, 5), **kwargs):
+    """
+    Function for creating a blank, multi-track well viewer with a well header
+    area, a well log header area for each track, and a well log data area.
+    """
+    
+    fig = plt.figure(num=1, figsize=figsize, **kwargs)
+    fig.clf()
+
+    nrow = 50
+    ncol = ntrack
+    
+    ttl_height = 1
+    hdr_height = 3
+    dat_height = nrow - ttl_height - hdr_height
+    
+    ttl = 0
+    hdr = ttl + ttl_height
+    dat = hdr + hdr_height
+    
+    axd = [plt.subplot2grid((nrow, ncol), (dat, 0), rowspan=dat_height)]
+    axh = [plt.subplot2grid((nrow, ncol), (hdr, 0), rowspan=hdr_height, sharex=axd[0])]
+    
+    for i in range(1, ncol):
+        axd.append(plt.subplot2grid((nrow, ncol), (dat, i), rowspan=dat_height, sharey=axd[0]))
+        axh.append(plt.subplot2grid((nrow, ncol), (hdr, i), rowspan=hdr_height, sharex=axd[i]))
+        
+    axttl = plt.subplot2grid((nrow, ncol), (ttl, 0), rowspan=ttl_height, colspan=ncol)
+    
+    for ax in fig.get_axes():
+        ax.tick_params(which='both', direction='in')
+        
+    curs = MultiCursor(fig.canvas, axd, vertOn=False, horizOn=True,
+                       lw=1, c=u'0.3')
+
+    wview = {'fig': fig, 'axd': axd, 'axh': axh, 'axttl': axttl, 'curs': curs}
+    
+    return wview
+
+
+def format_wellview(wview, ylabel='Depth', title_text='Title', ylim='none'):
+    """
+    Once all well data are plotted in an aura wellviewer figure, call this
+    function to make the well viewer figure look nice.
+    """
+
+    fig = wview['fig']
+    axd = wview['axd']
+    axh = wview['axh']
+    axttl = wview['axttl']
+    
+    axd[0].invert_yaxis()
+    if ylim != 'none':
+        axd[0].set_ylim(ylim)
+        
+    ntrack = len(axd)
+    count = 1
+    for (axdi, axhi) in zip(axd, axh):
+        
+        axdi.grid(True, which='major', ls=':', lw=0.5)
+        axdi.grid(True, which='minor', ls=':', lw=0.5)
+        axdi.minorticks_on()
+        axdi.xaxis.set_ticks_position('top')
+        axdi.xaxis.set_label_position('top')
+        [label.set_visible(False) for label in axdi.get_xticklabels()]
+        
+        axhi.set_facecolor(u'1.0')
+        axhi.set_frame_on(True)
+        axhi.grid(False)
+        axhi.xaxis.set_visible(False)
+        axhi.yaxis.set_visible(False)
+
+        axdi.yaxis.set_ticks_position('both')
+        
+        if (count==1):
+            axdi.set_ylabel(ylabel)
+        
+        elif count==ntrack:
+            axdi.set_ylabel(ylabel)
+            axdi.yaxis.set_ticks_position('right')
+            axdi.yaxis.set_label_position('right')
+            
+        else:
+            axdi.tick_params(labelright=True)
+            [label.set_visible(False) for label in axdi.get_yticklabels()]
+            
+        count += 1
+
+    axttl.set_facecolor([1.0, 1.0, 0.9])  # '#fcfcc4' is a light yellow
+    axttl.set_frame_on(True)
+    axttl.grid(False)
+    axttl.xaxis.set_visible(False)
+    axttl.yaxis.set_visible(False)
+    axttl.text(0.5, 0.5, title_text, ha='center', va='center', weight='normal',
+               fontsize=14)
+    axttl.set_xlim([0, 1])
+    axttl.set_ylim([0, 1])
+    
+    fig.tight_layout(w_pad=0.00, h_pad=0.00)
+
+
+def plot_log(wview, tracknum, aura_log, dec_places=0, numlogs=1, logpos=1,
+             xscale='normal', c='k', lw=0.5, ls='-', llim=None, rlim=None, fs=9):
+    """
+    Function to plot logs in a Well Viewer created using the 
+    aura.plot.make_wellvew() function.
+    
+    Input logs are required to be aura.well.AuraLog() objects.
+    
+    """
+    
+    fmtstr = '%.' + str(dec_places) + 'f'
+    
+    axd = wview['axd']
+    axh = wview['axh']
+    
+    if xscale=='log':
+        axd[tracknum].set_xscale('log')
+        axh[tracknum].set_xscale('log')
+        
+    axd[tracknum].plot(aura_log.data, aura_log.zref, c=c, lw=lw, ls=ls)
+    axd[tracknum].set_xlim(llim, rlim)
+    
+    xlim = axd[tracknum].get_xlim()
+    
+    data_range = np.abs(xlim[1] - xlim[0])
+    
+    if xscale == 'log':
+        data_lim_offset0 =  xlim[0]
+        data_lim_offset1 =  xlim[1]
+        
+    else:
+        data_lim_offset0 =  xlim[0] #+ data_range*0.02*np.sign(xlim[1]-xlim[0])
+        data_lim_offset1 =  xlim[1] #- data_range*0.02*np.sign(xlim[1]-xlim[0])
+    
+    axh[tracknum].plot([data_lim_offset0, data_lim_offset1], (logpos, logpos),
+                       c=c, lw=lw, ls=ls)
+    
+    bbox = dict(fc=None, ec=None, alpha=0.0, pad=0.0)
+    
+    axh[tracknum].text(data_lim_offset0, logpos, ' ' + (fmtstr % xlim[0]), 
+                       va='top', ha='left', color=c, 
+                       bbox=bbox, fontsize=fs)
+    
+    axh[tracknum].text(data_lim_offset1, logpos, (fmtstr % xlim[1]) + ' ', 
+                       va='top', ha='right', color=c, 
+                       bbox=bbox, fontsize=fs)
+    
+    if xscale=='log':
+        xpos_logname = np.sqrt(xlim[-1] - xlim[0]) + xlim[0]
+    else:
+        xpos_logname = np.mean(xlim)
+        
+    if len(aura_log.units)>0:
+        axh[tracknum].text(xpos_logname, logpos, aura_log.name+'\n('+aura_log.units+')', 
+                           va='center', ha='center', color=c, 
+                           fontsize=fs, fontweight='normal')
+    else:
+        axh[tracknum].text(xpos_logname, logpos, aura_log.name, 
+                           va='bottom', ha='center', color=c, 
+                           fontsize=fs, fontweight='normal')
+    
+    axh[tracknum].set_ylim([0.5, numlogs+1.0])
+    axh[tracknum].set_xlim(xlim)
+    
+    
 def plot_filled_logs(ax, logs, z, fill_colors, labels, lw=1.0, alpha=0.3):
     """
     Plot a series of logs using fill colors between each log. Designed to show
@@ -282,201 +498,86 @@ def plot_filled_logs(ax, logs, z, fill_colors, labels, lw=1.0, alpha=0.3):
         logsum = logsum + logs[i]
 
 
-def plot_rokdoc_markers(markers, well, axes, domain='md'):
+def plot_blocky(ax, data, zdata, linespec='b-', lw=1):
     """
-    Convenience function to plot RokDoc well markers in log tracks.
+    Convenience function for plotting a blocky log.
+    
+    Ensure that the zdata log has 1 more sample than the data log.
     """
     
+    for i in range(0, len(data)):
+        ax.plot([data[i], data[i]], [zdata[i], zdata[i+1]], linespec, lw=lw)
+        
+    for i in range(1, len(data)):
+        ax.plot([data[i-1], data[i]], [zdata[i], zdata[i]], linespec, lw=lw)
+
+
+def plot_log_fill(ax, data, zdata, baseline, logscale=False, lw=1.0, **kwargs):
+    """
+    Convenience function for adding colormapped fill to a log
+    """
+    
+    f = interp1d(zdata[~np.isnan(data)], data[~np.isnan(data)], kind='linear',
+                 fill_value='extrapolate', bounds_error=False)
+    dataf = f(zdata)
+
+    xx = np.hstack([baseline, dataf, baseline, baseline])
+    yy = np.hstack([zdata[0], zdata, zdata[-1], zdata[0]])
+
+    path = Path(np.vstack([xx, yy]).T)
+    patch = PathPatch(path, facecolor='none', ec='none')
+    ax.add_patch(patch)
+    
+    img = np.vstack([data, data]).T
+    
+    if logscale:
+        img = np.log10(img)
+        
+    fill = ax.imshow(img, origin='lower',
+                     extent=[-1e9, 1e9, zdata[0], zdata[-1]],
+                     clip_path=patch, clip_on=True, aspect='auto', **kwargs)
+    return fill
+    
+
+def plot_tops(ax, tops, tops_axes=None, c='b', lw=1, halign='center'):
+    """
+    Convenience function for plotting well tops on a figure of well logs vs
+    Depth. Tops are expected to be a dictionary with:
+        keys == top names
+        values.zref == top depths.
+    """
+    
+    #bbox = {'boxstyle': 'round',
+    #        'facecolor': 'white',
+    #        'edgecolor': c,
+    #        'alpha': 1.0}
+    bbox = None
     count = 0
-    for ax in axes:
-        xlim = ax.get_xlim()
+    
+    for cax in ax:
+        xlim = cax.get_xlim()
         
-        for name in markers[well].keys():
-            z = markers[well][name][domain]
-            ax.plot(xlim, [z, z], 'b', lw=1)
-            if count == 0:
-                name_x = (xlim[1]-xlim[0])*0.05 + xlim[0]
-                ax.text(name_x, z, name, c='b', ha='left', va='bottom')
-        
-        count += 1
-
-
-
-def format_log_axes(axes, ylabel):
-    """
-    Function to format a series of axes displaying simple log curves.
-    """
-    
-    for ax in axes:
-        ax.xaxis.set_ticks_position('top')
-        ax.xaxis.set_label_position('top')
-        ax.grid(True, ls=':')
-    
-    for ax in axes[1:-1]:
-        plt.setp(ax.get_yticklabels(), visible=False)
-    
-    axes[0].set_ylabel(ylabel)
-    axes[-1].set_ylabel(ylabel)
-    axes[-1].yaxis.set_ticks_position('right')
-    axes[-1].yaxis.set_label_position('right')\
-        
-    
-def make_wellview(ntrack=5, figsize=(5, 5)):
-    """
-    Function for creating a blank, multi-track well viewer with a well header
-    area, a well log header area for each track, and a well log data area.
-    """
-    
-    fig = plt.figure(num=1, figsize=figsize)
-    fig.clf()
-
-    nrow = 30
-    ncol = ntrack
-    ttl = 0
-    hdr = 1
-    dat = 4
-    
-    axd = [plt.subplot2grid((nrow, ncol), (dat, 0), rowspan=nrow-3)]
-    axh = [plt.subplot2grid((nrow, ncol), (hdr, 0), rowspan=3, sharex=axd[0])]
-    
-    for i in range(1, ncol):
-        axd.append(plt.subplot2grid((nrow, ncol), (dat, i), rowspan=nrow-2, sharey=axd[0]))
-        axh.append(plt.subplot2grid((nrow, ncol), (hdr, i), rowspan=3, sharex=axd[i], sharey=axh[0]))
-        
-    axttl = plt.subplot2grid((nrow, ncol), (ttl, 0), colspan=ncol)
-    
-    for ax in fig.get_axes():
-        ax.tick_params(which='both', direction='in')
-        
-    curs = MultiCursor(fig.canvas, axd, vertOn=False, horizOn=True,
-                       lw=1, c=u'0.3')
-
-    wview = {'fig': fig, 'axd': axd, 'axh': axh, 'axttl': axttl, 'curs': curs}
-    
-    return wview
-
-
-def plot_log(wview, tracknum, aura_log, fmtstr='%.1f', numlogs=1, logpos=1, xscale='normal'):
-    """
-    Function to plot logs in a Well Viewer created using the 
-    aura.plot.make_wellvew() function.
-    
-    Input logs are required to be aura.well.AuraLog() objects.
-    
-    """
-    axd = wview['axd']
-    axh = wview['axh']
-    
-    if xscale=='log':
-        axd[tracknum].set_xscale('log')
-        axh[tracknum].set_xscale('log')
-        
-    axd[tracknum].plot(aura_log.data, aura_log.zref, 
-                       color=aura_log.c, lw=aura_log.lw)
-    axd[tracknum].set_xlim(aura_log.plt_range)
-    
-    xlim = axd[tracknum].get_xlim()
-    
-    data_range = np.abs(xlim[1] - xlim[0])
-    
-    if xscale == 'log':
-        data_lim_offset0 =  xlim[0]
-        data_lim_offset1 =  xlim[1]
-    else:
-        data_lim_offset0 =  data_range*0.02 + xlim[0]
-        data_lim_offset1 = -data_range*0.02 + xlim[1]
-    
-    axh[tracknum].plot([data_lim_offset0, data_lim_offset1], (logpos, logpos), 
-                       c=aura_log.c, lw=aura_log.lw)
-    
-    bbox = dict(fc='white', ec='white', alpha=1.0, pad=0.5)
-    
-    axh[tracknum].text(data_lim_offset0, logpos, fmtstr % xlim[0], 
-                       va='top', ha='left', color=aura_log.c, 
-                       bbox=bbox, fontsize=aura_log.fs)
-    
-    axh[tracknum].text(data_lim_offset1, logpos, fmtstr % xlim[1], 
-                       va='top', ha='right', color=aura_log.c, 
-                       bbox=bbox, fontsize=aura_log.fs)
-    
-    if xscale=='log':
-        xpos_logname = np.sqrt(np.cumsum(xlim))
-    else:
-        xpos_logname = np.mean(xlim)
-        
-    if len(aura_log.units)>0:
-        axh[tracknum].text(xpos_logname, logpos, aura_log.name+' ('+aura_log.units+')', 
-                           va='bottom', ha='center', color=aura_log.c, 
-                           fontsize=aura_log.fs)
-    else:
-        axh[tracknum].text(xpos_logname, logpos, aura_log.name, 
-                           va='bottom', ha='center', color=aura_log.c, 
-                           fontsize=aura_log.fs)
-    
-    axh[tracknum].set_ylim([0, numlogs+1])
-    axh[tracknum].set_xlim(xlim)
-    
-    
-
-
-def format_wellview(wview, ylabel='Depth', title_text='Title', ylim='none'):
-    """
-    Once all well data are plotted in an aura wellviewer figure, call this
-    function to make the well viewer figure look nice.
-    """
-
-    fig = wview['fig']
-    axd = wview['axd']
-    axh = wview['axh']
-    axttl = wview['axttl']
-    
-    axd[0].invert_yaxis()
-    if ylim != 'none':
-        axd[0].set_ylim(ylim)
-        
-    ntrack = len(axd)
-    count = 1
-    for (axdi, axhi) in zip(axd, axh):
-        
-        axdi.grid(True, which='major', ls=':', lw=0.5)
-        axdi.grid(True, which='minor', ls=':', lw=0.5)
-        axdi.minorticks_on()
-        axdi.xaxis.set_ticks_position('top')
-        axdi.xaxis.set_label_position('top')
-        [label.set_visible(False) for label in axdi.get_xticklabels()]
-        
-        axhi.set_facecolor('white')
-        axhi.set_frame_on(True)
-        axhi.grid(False)
-        axhi.xaxis.set_visible(False)
-        axhi.yaxis.set_visible(False)
-
-        axdi.yaxis.set_ticks_position('both')
-        
-        if (count==1):
-            axdi.set_ylabel(ylabel)
-        
-        elif count==ntrack:
-            axdi.set_ylabel(ylabel)
-            axdi.yaxis.set_ticks_position('right')
-            axdi.yaxis.set_label_position('right')
+        for key, value in tops.items():
             
-        else:
-            axdi.tick_params(labelright=True)
-            [label.set_visible(False) for label in axdi.get_yticklabels()]
+            topname = key
+            topz = value['zref']
             
+            cax.plot(xlim, [topz, topz], c=c, lw=lw)
+            
+            if (tops_axes != None) & (count == tops_axes):
+                if halign == 'center':
+                    xref = np.mean(xlim)
+                elif halign == 'right':
+                    xref = xlim[-1]
+                elif halign == 'left':
+                    xref = xlim[0]
+                    
+                #cax.text(xref, topz, topname, ha=halign, va='bottom', c=c)
+                cax.annotate(topname, (xref, topz), ha=halign, va='bottom',
+                             c=c, bbox=bbox)
+                
+        cax.set_xlim(xlim)
         count += 1
-    
-    axttl.set_facecolor('#fcfcc4')
-    axttl.set_frame_on(True)
-    axttl.grid(False)
-    axttl.xaxis.set_visible(False)
-    axttl.yaxis.set_visible(False)
-    axttl.text(0.5, 0.5, title_text, ha='center', va='center', weight='normal')
-    axttl.set_xlim([0, 1])
-    axttl.set_ylim([0, 1])
-    
-    fig.tight_layout(w_pad=0.00, h_pad=0.00)
 
 
 def add_van_krevelan_template(ax, lw=2, fs=14, c='k'):
@@ -657,3 +758,36 @@ def plot_confusion_matrix(y_true, y_pred, classes, normalize=False, title=None,
     
     return ax
 
+
+def plot_mohr_circle(ax, S1, S2, S3, pts=False, *args, **kwargs):
+    """
+    Plot mohr circle for three principal stresses
+    
+    S1 = maximum principal stress magnitude
+    S2 = medium principal stress magnitude
+    S3 = minimum principal stress magnitude
+    pts = flag to add points on x-axis corresponding to principal stresses
+    """
+    
+    R_maj = S1 - S3
+    R_mid = S1 - S2
+    R_min = S2 - S3
+    
+    cent_maj = 0.5*(S1 + S3)
+    cent_mid = 0.5*(S1 + S2)
+    cent_min = 0.5*(S2 + S3)
+
+    arc1 = mpatches.Arc([cent_maj, 0.0], R_maj, R_maj, angle=0.0, theta1=0.0, theta2=180.0, *args, **kwargs)
+    arc2 = mpatches.Arc([cent_mid, 0.0], R_mid, R_mid, angle=0.0, theta1=0.0, theta2=180.0, *args, **kwargs)
+    arc3 = mpatches.Arc([cent_min, 0.0], R_min, R_min, angle=0.0, theta1=0.0, theta2=180.0, *args, **kwargs)
+
+    ax.add_patch(arc1)
+    ax.add_patch(arc2)
+    ax.add_patch(arc3)
+    
+    if pts==True:
+        ax.plot(S1, 0, 'ko')
+        ax.plot(S2, 0, 'ko')
+        ax.plot(S3, 0, 'ko')
+        
+    ax.autoscale()

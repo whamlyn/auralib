@@ -66,7 +66,8 @@ def Rpp_bortfeld(theta1, vp_in, vs_in, rho_in):
     return Rpp_bort
 
 
-def Rpp_akirichards(theta_in, vp_in, vs_in, rho_in, theta_mode='average'):
+def Rpp_akirichards(theta_in, vp_in, vs_in, rho_in, theta_mode='average', 
+                    return_weights=False):
     """
     Calculate angle dependent p-wave to p-wave reflection coefficients using
     Aki & Richards approximation to Zoeppritz P-P reflectivity.
@@ -99,18 +100,22 @@ def Rpp_akirichards(theta_in, vp_in, vs_in, rho_in, theta_mode='average'):
     theta_r = (theta_ir + theta_tr)/2
     
     if theta_mode == 'average':
-        a = 1/2 * (1 - 4*(vs/vp)**2*np.sin(theta_r)**2)
-        b = 1/(2*np.cos(theta_r)**2)
-        c = -4*(vs/vp)**2*np.sin(theta_r)**2
+        weight1 = 1/2 * (1 - 4*(vs/vp)**2*np.sin(theta_r)**2)
+        weight2 = 1/(2*np.cos(theta_r)**2)
+        weight3 = -4*(vs/vp)**2*np.sin(theta_r)**2
         
     elif theta_mode == 'incident':
-        a = 1/2 * (1 - 4*(vs/vp)**2*np.sin(theta_ir)**2)
-        b = 1/(2*np.cos(theta_ir)**2)
-        c = -4*(vs/vp)**2*np.sin(theta_ir)**2
+        weight1 = 1/2 * (1 - 4*(vs/vp)**2*np.sin(theta_ir)**2)
+        weight2 = 1/(2*np.cos(theta_ir)**2)
+        weight3 = -4*(vs/vp)**2*np.sin(theta_ir)**2
     
-    Rpp_ar = a*drho/rho + b*dvp/vp + c*dvs/vs
+    Rpp_ar = weight1*drho/rho + weight2*dvp/vp + weight3*dvs/vs
     
-    return Rpp_ar
+    if return_weights:
+        return Rpp_ar, weight1, weight2, weight3, drho/rho, dvp/vp, dvs/vs
+
+    else:
+        return Rpp_ar
     
 
 def Rps_akirichards(theta_in, vp_in, vs_in, rho_in, theta_mode='average'):
@@ -350,7 +355,7 @@ def Rpp_smithgidlow(theta_in, vp_in, vs_in, rho_in, theta_mode='incident'):
 
 
 def Rpp_fatti(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident',
-              return_terms=False):
+              return_weights=False):
     """
     Function for calculating P-P reflectivity using Fatti's P-P reflectivity
     approximation.
@@ -396,18 +401,27 @@ def Rpp_fatti(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident'
         theta_r = theta_ir
     
     k = (vs/vp)**2
-    term1 = (0.5 + 0.5* np.tan(theta_r)**2) * dIp/Ip
-    term2 = -4*k*np.sin(theta_r)**2 * dIs/Is
-    term3 = -(0.5*np.tan(theta_r)**2 - 2*k*np.sin(theta_r)**2) * drho/rho
+    weight1 = (0.5 + 0.5* np.tan(theta_r)**2)
+    weight2 = -4*k*np.sin(theta_r)**2
+    weight3 = -(0.5*np.tan(theta_r)**2 - 2*k*np.sin(theta_r)**2)
+    
+    term1 = weight1 * dIp/Ip
+    term2 = weight2 * dIs/Is
+    term3 = weight3 * drho/rho
 
+    # term1 = (1.0 + np.tan(theta_r)**2) * dIp/Ip
+    # term2 = -8*k*np.sin(theta_r)**2 * dIs/Is
+    # term3 = -1*(0.5*np.tan(theta_r)**2 - 2*k*np.sin(theta_r)**2) * drho/rho
+    
     if num_terms == 3:
         Rpp_fat = term1 + term2 + term3
         
     elif num_terms == 2:
         Rpp_fat = term1 + term2
     
-    if return_terms:
-        return term1, term2, term3
+    if return_weights:
+        return Rpp_fat, weight1, weight2, weight3, dIp/Ip, dIs/Is, drho/rho
+    
     else:
         return Rpp_fat
     
@@ -468,8 +482,8 @@ def Rpp_shuey(theta_in, vp_in, vs_in, rho_in, num_terms=2, theta_mode='average')
     return Rpp_shuey
 
 
-def rpp_gray2(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident',
-              return_terms=False):
+def Rpp_gray2(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident',
+              return_weights=False):
     """
     Function for calculating P-P reflectivity using Gray's P-P reflectivity
     approximation (equation #2; Rpp = f(lambda, mu, rho))
@@ -515,18 +529,25 @@ def rpp_gray2(theta_in, vp_in, vs_in, rho_in, num_terms=3, theta_mode='incident'
         theta_r = theta_ir
     
     k = (vs/vp)**2
-    term1 = (0.25 - 0.5*k) * (1/np.cos(theta_r)**2) * dlam/lam
-    term2 = k*(0.5/(np.cos(theta_r)**2) - 2*np.sin(theta_r)**2) * dmu/mu
-    term3 = (0.5 - 0.25/(np.cos(theta_r)**2))*drho/rho
-
+    #term1 = (0.25 - 0.5*k) * (1/np.cos(theta_r)**2) * dlam/lam
+    #term2 = k*(0.5/(np.cos(theta_r)**2) - 2*np.sin(theta_r)**2) * dmu/mu
+    #term3 = (0.5 - 0.25/(np.cos(theta_r)**2))*drho/rho
+    
+    weight1 = 0.5*(1 - 0.5*np.cos(theta_r)**-2)
+    weight2 = 0.25*(1-2*k)*np.cos(theta_r)**-2
+    weight3 = 0.5*k*(np.cos(theta_r)**-2 - 4*np.sin(theta_r)**2)
+    term1 = weight1 * drho/rho
+    term2 = weight2 * dlam/lam
+    term3 = weight3 * dmu/mu
+    
     if num_terms == 3:
         Rpp_gray2 = term1 + term2 + term3
         
     elif num_terms == 2:
         Rpp_gray2 = term1 + term2
         
-    if return_terms:
-        return term1, term2, term3
+    if return_weights:
+        return Rpp_gray2, weight1, weight2, weight3, drho/rho, dlam/lam, dmu/mu
     else:
         return Rpp_gray2
 
@@ -712,7 +733,7 @@ def rpp_ruger(theta, vp, vs, rho, delta, epsilon, return_components=False):
     ai = vp*rho
     si = vs*rho
     
-    mu = vp**2 * rho
+    mu = vs**2 * rho
     
     theta1r = np.deg2rad(theta1)
     theta2r = np.arcsin(vp[1:]/vp[:-1] * np.sin(theta1r))
@@ -781,7 +802,7 @@ def calc_eei(chi, vp, vs, rho, K='auto', norm='auto'):
     return eei
 
 
-def calc_IG(rpp, theta, terms=2):
+def calc_IG(rpp, theta, terms=2, reg=0.0):
     """
     Calculates intercept and gradient for a single time sample of
     reflectivities.
@@ -791,19 +812,24 @@ def calc_IG(rpp, theta, terms=2):
     """
     
     thetar = np.deg2rad(theta)
+    mask = ~np.isnan(thetar) & ~np.isnan(rpp)
+    thetar = thetar[mask]
+    rpp = rpp[mask]
     
     Y = rpp.reshape((-1, 1))
     
+
+    
     if terms==2:
         X = np.hstack([np.ones(Y.shape), np.sin(thetar.reshape((-1, 1)))**2])
-        m = np.dot(np.dot(np.linalg.inv(np.dot(X.T, X)), X.T), Y).flatten()
+        m = np.dot(np.dot(np.linalg.inv(np.dot(X.T, X)), X.T, reg*np.eye(2)), Y).flatten()
         I = m[0]
         G = m[1]
         return I, G
     
     if terms==3:
         X = np.hstack([np.ones(Y.shape), np.sin(thetar.reshape((-1, 1)))**2, np.tan(thetar.reshape((-1, 1)))**2 - np.sin(thetar.reshape((-1, 1)))**2])
-        m = np.dot(np.dot(np.linalg.inv(np.dot(X.T, X)), X.T), Y).flatten()
+        m = np.dot(np.dot(np.linalg.inv(np.dot(X.T, X) + reg*np.eye(3)), X.T), Y).flatten()
         I = m[0]
         G = m[1]
         C = m[2]

@@ -8,13 +8,17 @@ Last Mod: 17-Aug-2016
 """
 
 import numpy as np
+from copy import deepcopy
+import os
+
 
 class LASReader(object):
     """
     Python class for reading log data in LAS format.
     """
     
-    def __init__(self, filename, null_subs=np.nan, max_lines=-1, read_tops=True):
+    def __init__(self, filename, null_subs=np.nan, max_lines=-1, read_tops=True,
+                 read_data=True, ignore_errors=False):
         """
         Constructor for LAS class
         """
@@ -30,10 +34,15 @@ class LASReader(object):
         self.curves = {}
         self.curve_names = []
         self.read_tops = read_tops
+        self.read_data = read_data
         
         # open LAS file for reading
-        with open(self.filename, 'r') as fd:
-            self.dbuf = fd.readlines()
+        if ignore_errors:
+            with open(self.filename, 'r', errors='ignore') as fd:
+                self.dbuf = fd.readlines()
+        else:
+            with open(self.filename, 'r') as fd:
+                self.dbuf = fd.readlines()                
         
         # count number of lines in file
         self.num_lines = len(self.dbuf)
@@ -244,35 +253,113 @@ class LASReader(object):
         Method to read curve data from the Data section of an LAS file
         """
         
-        tmp = np.loadtxt(self.filename, dtype='float', skiprows=self.log_data_start)
-        idx = np.nonzero(tmp == self.well_info['NULL']['data'])
-        tmp[idx] = np.nan
-        for i in range(0, len(self.curve_names)):
-            self.curves[self.curve_names[i]] = tmp[:,i]
-        
-        del(self.dbuf)
+        if self.read_data:
+            tmp = np.loadtxt(self.filename, dtype='float', skiprows=self.log_data_start)
+            idx = np.nonzero(tmp == self.well_info['NULL']['data'])
+            tmp[idx] = np.nan
+            for i in range(0, len(self.curve_names)):
+                self.curves[self.curve_names[i]] = tmp[:,i]
+            
+            del(self.dbuf)
         
         
     def _get_curve_data_wrapped(self):
         """
         Method to read wrapped curve data from the Data section of an LAS file
         """
-        ncurves = len(self.curve_names)
-        data = self.dbuf[self.log_data_start:]
-        dataflat = []
-        for line in data:
-            dataflat.extend(line.strip().split())
-        
-        dataflat = np.array(dataflat, dtype='float')
-        dataflat = dataflat.reshape([-1, ncurves])
-        
-        idx = np.nonzero(dataflat == self.well_info['NULL']['data'])
-        dataflat[idx] = np.nan
-        
-        for i in range(0, len(self.curve_names)):
-            self.curves[self.curve_names[i]] = dataflat[:, i]
-        
-        del(self.dbuf)
-       
-        
 
+        if self.read_data:
+            ncurves = len(self.curve_names)
+            data = self.dbuf[self.log_data_start:]
+            dataflat = []
+            for line in data:
+                dataflat.extend(line.strip().split())
+            
+            dataflat = np.array(dataflat, dtype='float')
+            dataflat = dataflat.reshape([-1, ncurves])
+            
+            idx = np.nonzero(dataflat == self.well_info['NULL']['data'])
+            dataflat[idx] = np.nan
+            
+            for i in range(0, len(self.curve_names)):
+                self.curves[self.curve_names[i]] = dataflat[:, i]
+            
+            del(self.dbuf)
+       
+    def write_las_file(self, output_filepath, verbose=False):
+        """
+        Method to write an LAS file to disk
+        """
+        
+        lines = []
+        
+        lines.append('~Version Information Block\n')
+        for key, value in self.vers_info.items():
+            if key == 'WRAP':
+                value['data'] = 'NO'  # las write does not support outputting wrapped data block yet
+                
+            curline = '%-5s.%21s: %s\n' % (key, value['data'], value['desc'])
+            lines.append(curline)
+                    
+        lines.append('~Well Information Block\n')
+        lines.append('#MNEM.UNIT        Data Type   Information\n')
+        lines.append('#---------- ----------------  -----------\n')
+        for key, value in self.well_info.items():
+            curline = '%-5s. %-s %21s: %s\n' % (key, value['unit'], value['data'], value['desc'])
+            lines.append(curline)   
+        
+        lines.append('~Curve Information Block\n')
+        lines.append('#MNEM.UNIT         API CODE   Curve Description\n')
+        lines.append('#---------- ----------------  -----------------\n')
+        for key, value in self.curve_info.items():
+            curline = '%-5s. %-s %21s: %s\n' % (key, value['unit'], value['api_code'], value['desc'])
+            lines.append(curline)   
+
+        lines.append('~Parameter Information Block\n')
+        lines.append('#MNEM.UNIT            Value   Description\n')
+        lines.append('#---------- ----------------  -----------\n')
+        for key, value in self.param_info.items():
+            curline = '%-5s. %-s %21s: %s\n' % (key, value['unit'], value['data'], value['desc'])
+            lines.append(curline)   
+
+        lines.append('~Other Information Block\n')
+        
+        lines.append('#\n')
+        
+        # get curve names and digits
+        dcols = list(self.curves.keys())
+        darray = np.array(list(self.curves.values()))
+        ncurves = np.shape(darray)[0]
+        nsamp = np.shape(darray)[1]
+        
+        # replace nans with null values
+        null = self.well_info['NULL']['data']
+        nanmask = np.isnan(darray)
+        darray[nanmask] = null
+        
+        # build the curve header line
+        fmt_hdr = '~A%13s' % dcols[0]
+        for i in range(1, ncurves):
+            fmt_hdr1 = '%15s' % dcols[i]
+            fmt_hdr += fmt_hdr1
+        fmt_hdr = fmt_hdr + '\n'
+        lines.append(fmt_hdr)
+        
+        # build the curve data lines
+        fmt_data = ncurves*'  %13f' + '\n'
+        for i in range(nsamp):
+            curline = fmt_data % tuple(darray[:, i])
+            lines.append(curline)
+        
+        if verbose:
+            for line in lines:
+                print(line[:-1])
+            
+        # test to see if output file already exists to prevent overwriting
+        file_exists = os.path.exists(output_filepath)
+        if file_exists:
+            print('Output file exists, cannot overwrite (%s)' % (output_filepath))
+        else:
+            with open(output_filepath, 'w') as fd:
+                for line in lines:
+                    fd.write(line)

@@ -14,7 +14,7 @@ import os
 import matplotlib.pyplot as plt
 import sys
 import codecs
-from copy import deepcopy
+from numba import jit, njit
 
 
 #  below are example of the Python dictionary structure used to define binary
@@ -55,16 +55,18 @@ class Segy(object):
     Python class for SEG-Y file manipulation
     """
 
-    def __init__(self, filename, def_thead=def_thead, def_bhead=def_bhead):
+    def __init__(self, filename, def_thead=def_thead, def_bhead=def_bhead, 
+                 ebcdic_fmt='ebcdic'):
         """
         Constructor for SEG-Y class.
         """
-        
+
         self.filename = filename
-        self.def_thead = deepcopy(def_thead)
-        self.def_bhead = deepcopy(def_bhead)
+        self.def_bhead = def_bhead
+        self.def_thead = def_thead
         self.bhead = {}
         self.thead = {}
+        self.ebcdic_fmt = ebcdic_fmt
         self.ebcdic = ' '
         self.idx = {}
 
@@ -91,12 +93,19 @@ class Segy(object):
         
         import codecs
         
+        if self.ebcdic_fmt == 'ebcdic':
+            encoding = 'cp500'
+        elif self.ebcdic_fmt == 'ascii':
+            encoding = 'utf-8'
+        else:
+            encoding = 'cp500'
+            
         with open(self.filename, 'rb') as fd:
             buf = fd.read(3200)
 
         ebhead = ''
-        for i in range(0, 3120, 80):
-            txt = '%s\n' % (codecs.decode(buf[i:(i+80)], 'cp500'))
+        for i in range(0, 3181, 80):
+            txt = '%s\n' % (codecs.decode(buf[i:(i+80)], encoding))
             ebhead = ebhead + txt
             
         self.ebcdic = ebhead
@@ -209,6 +218,7 @@ class Segy(object):
         tmin = 0
         tmax = self.num_traces
         tg = int((tmax+tmin)/2)
+        tg0 = tg*1
         
         max_iter = 100 # maximum number of iterations before deciding failure
         count = 0
@@ -231,7 +241,7 @@ class Segy(object):
                     print('---Success: IL: %i XL: %i Trace: %i' % (il0, xl0, tg))
                 tg = [tg]
                 
-            elif count == max_iter:
+            elif (count == max_iter) | (np.abs(tg-tg0)==1):
                 if verbose:
                     print('Failed to find desired inline. Terminating...')
                 return []
@@ -244,6 +254,8 @@ class Segy(object):
             elif ilxlg < ilxl0:
                 tmin = tg*1
                 tg = int(round((tmax + tmin)/2))
+            
+            tg0 = tg*1
         
         if multi>0:
             # Search a number of traces around the "tg" trace to return
@@ -337,7 +349,7 @@ class Segy(object):
         return tdata
     
     
-    def read_tdata_multi(self, tr_start, tr_end, skip=1, verbose=0):
+    def read_tdata_multi_v1(self, tr_start, tr_end, skip=1, verbose=0, as_array=True):
         """
         Read multiple sequential traces from a SEG-Y file.  This method is faster
     	than read_trace_data() but is restricted to reading sequential traces.
@@ -350,6 +362,7 @@ class Segy(object):
         """            
         
         tdata = []
+        
         count = 0
         if self.fmt_str == '>ibm':
             # open file for binary read    
@@ -357,7 +370,7 @@ class Segy(object):
                 
                 # create an empty python list to store trace amplitudes and begin
                 # looping over the traces to be read.
-                for tracenum in range(tr_start, tr_end):
+                for tracenum in range(tr_start, tr_end, skip):
                     count += 1
                     if (verbose > 0) & (count == verbose+1):
                         print('reading trace %i' % (tracenum))
@@ -429,6 +442,275 @@ class Segy(object):
                     tdata.append(buf1)    
         
         return tdata
+    
+    
+    def _trace_numpy_dtype(self):
+        """
+        Return the NumPy dtype used for non-IBM SEG-Y trace samples.
+        """
+        fmt_code = self.bhead['samp_fmt']
+    
+        dtype_codes = {
+            2: 'i4',   # four-byte two's-complement integer
+            3: 'i2',   # two-byte two's-complement integer
+            5: 'f4',   # four-byte IEEE floating point
+            8: 'i1',   # one-byte two's-complement integer
+        }
+    
+        if fmt_code not in dtype_codes:
+            raise ValueError(
+                'unsupported NumPy trace sample format code: %r'
+                % fmt_code
+            )
+    
+        if self.endian == 'big':
+            endian = '>'
+        else:
+            endian = '<'
+    
+        return np.dtype(endian + dtype_codes[fmt_code])
+
+
+    def read_tdata_multi(self, tr_start, tr_end, skip=1, verbose=0,
+                         as_array=True):
+        """
+        Read sample data from multiple sequential SEG-Y traces.
+    
+        Trace samples are read through strided NumPy memory-map views. This
+        avoids a seek/read/unpack operation for every trace.
+    
+        Parameters
+        ----------
+        tr_start : int
+            First trace to read, zero indexed.
+        tr_end : int
+            Exclusive upper trace number, as for ``range``.
+        skip : int, optional
+            Trace increment.
+        verbose : int, optional
+            If greater than zero, process and report progress after this many
+            output traces. For example, verbose=100000 reports progress every
+            100,000 traces.
+        as_array : bool, optional
+            If True, return a two-dimensional NumPy array with shape
+            ``(number_of_traces, number_of_samples)``. If False, return a
+            nested Python list.
+    
+        Returns
+        -------
+        numpy.ndarray or list
+            Trace data organized as trace by sample.
+        """
+        if skip <= 0:
+            raise ValueError('skip must be greater than zero')
+    
+        if tr_start < 0 or tr_end < tr_start:
+            raise ValueError('invalid trace range')
+    
+        if verbose < 0:
+            raise ValueError('verbose must be zero or greater')
+    
+        # Clamp the requested range to the available traces.
+        tr_end = min(tr_end, self.num_traces)
+    
+        ntrace = len(range(tr_start, tr_end, skip))
+        nsamp = self.bhead['num_samp']
+    
+        if ntrace == 0:
+            result = np.empty((0, nsamp), dtype=np.float64)
+            return result if as_array else result.tolist()
+    
+        # With verbose=0, process all requested traces in one operation.
+        # Otherwise, verbose is both the chunk size and reporting interval.
+        chunk_size = int(verbose) if verbose > 0 else ntrace
+    
+        raw = np.memmap(
+            self.filename,
+            dtype=np.uint8,
+            mode='r'
+        )
+    
+        chunks = []
+    
+        try:
+            for start in range(0, ntrace, chunk_size):
+                stop = min(start + chunk_size, ntrace)
+                chunk_ntrace = stop - start
+    
+                # Convert the output-array position into the corresponding
+                # physical trace number in the SEG-Y file.
+                chunk_first_trace = tr_start + start * skip
+    
+                sample_offset = (
+                    3600
+                    + chunk_first_trace * self.trace_size
+                    + 240
+                )
+    
+                trace_stride = self.trace_size * skip
+    
+                if self.fmt_str in ('>ibm', '<ibm'):
+                    # IBM floating-point values have no native NumPy dtype.
+                    # First gather the four bytes belonging to each sample.
+                    byte_view = np.ndarray(
+                        shape=(chunk_ntrace, nsamp, 4),
+                        dtype=np.uint8,
+                        buffer=raw,
+                        offset=sample_offset,
+                        strides=(trace_stride, 4, 1)
+                    )
+    
+                    # Make the sample bytes contiguous before conversion.
+                    packed = np.ascontiguousarray(byte_view).tobytes()
+                    total_samples = chunk_ntrace * nsamp
+    
+                    if self.fmt_str == '>ibm':
+                        values = self._ibm2ieee_b_new(
+                            packed,
+                            nsamp=total_samples
+                        )
+                    else:
+                        values = self._ibm2ieee_l_new(
+                            packed,
+                            nsamp=total_samples
+                        )
+    
+                    values = np.asarray(
+                        values,
+                        dtype=np.float64
+                    ).reshape(chunk_ntrace, nsamp)
+    
+                else:
+                    dtype = self._trace_numpy_dtype()
+    
+                    values = np.ndarray(
+                        shape=(chunk_ntrace, nsamp),
+                        dtype=dtype,
+                        buffer=raw,
+                        offset=sample_offset,
+                        strides=(trace_stride, dtype.itemsize)
+                    )
+    
+                    # Copy the data because the view is backed by the memmap.
+                    values = np.array(values)
+    
+                chunks.append(values)
+    
+                if verbose > 0:
+                    print(
+                        'reading trace data: %i of %i'
+                        % (stop, ntrace)
+                    )
+    
+        finally:
+            del raw
+    
+        if len(chunks) == 1:
+            result = chunks[0]
+        else:
+            result = np.concatenate(chunks, axis=0)
+    
+        return result if as_array else result.tolist()
+
+    
+    def read_tdata_multi_dev(self, tr_start, tr_end, skip=1, verbose=0, as_array=True):
+        """
+        Read multiple sequential traces from a SEG-Y file.  This method is faster
+    	than read_trace_data() but is restricted to reading sequential traces.
+        
+        Note:
+            - tr_start is the first trace to be read (zero-indexed)
+            - tr_end is the final trace to be read (inclusive)
+            - This method starts at zero (e.g. first SEG-Y trace has 
+              tracenum = 0)
+        """            
+        
+        
+        ntraces = tr_end - tr_start
+        nsamp = self.bhead['num_samp']*1
+        
+        tdata = np.zeros((ntraces, nsamp))
+        
+        count = 0
+        if self.fmt_str == '>ibm':
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
+                
+                # create an empty python list to store trace amplitudes and begin
+                # looping over the traces to be read.
+                for tracenum in range(tr_start, tr_end, skip):
+                    count += 1
+                    if (verbose > 0) & (count == verbose+1):
+                        print('reading trace %i' % (tracenum))
+                        count = 1
+                    
+                    # move cursor to start of trace samples that you want to read
+                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    fd.seek(bpos)
+                    
+                    # read all the samples for the trace
+                    ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
+                    buf1 = self._ibm2ieee_b_new(ibm_float_trace)
+                    
+                    tdata[count] = np.asarray(buf1)
+                    
+        elif self.fmt_str == '<ibm':
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
+                
+                # create an empty python list to store trace amplitudes and begin
+                # looping over the traces to be read.
+                for tracenum in range(tr_start, tr_end, skip):
+                    count += 1
+                    if (verbose > 0) & (count == verbose+1):
+                        print('reading trace %i' % (tracenum))
+                        count = 1
+                    
+                    # move cursor to start of trace samples that you want to read
+                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    fd.seek(bpos)
+                    
+                    # read all the samples for the trace
+                    ibm_float_trace = fd.read(self.bhead['num_samp'] * self.numbytes)
+                    buf1 = self._ibm2ieee_l_new(ibm_float_trace)
+                    
+                    tdata[count] = np.asarray(buf1)
+                    
+        else:
+            #  build format string
+            if self.endian == 'big':
+                tr_fmt_str = '>'
+            else:
+                tr_fmt_str = '<'
+            
+            #for i in range(0, self.bhead['num_samp']):
+            #    tr_fmt_str = tr_fmt_str + self.fmt_str[1:]
+            tr_fmt_str = '%s%i%s' % (self.fmt_str[0], self.bhead['num_samp'], self.fmt_str[1])
+            
+            # open file for binary read    
+            with open(self.filename, 'rb') as fd:
+                
+                # create an empty python list to store trace amplitudes and begin
+                # looping over the traces to be read.
+                for tracenum in range(tr_start, tr_end, skip):
+                    
+                    count += 1
+                    if (verbose > 0) & (count == verbose+1):
+                        print('reading trace %i' % (tracenum))
+                        count = 1                    
+    
+                    # move cursor to start of trace samples that you want to read
+                    bpos = 3600 + 240 + self.trace_size*tracenum
+                    fd.seek(bpos)
+                    
+                    # read all the samples for the trace
+                    buf = fd.read(self.bhead['num_samp'] * self.numbytes)
+                    buf1 = unpack(tr_fmt_str, buf)
+                    
+                    tdata[count] = np.asarray(buf1)
+        
+        return tdata if as_array else tdata.tolist()
+
     
 
     def read_tdata_random(self, traces, tmin=-1, tmax=-1, verbose=0):
@@ -589,7 +871,7 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead_multi(self,  tracenum1, tracenum2, skip=1, verbose=0):
+    def read_thead_multi_v1(self,  tracenum1, tracenum2, skip=1, verbose=0):
         """
         Read trace headers from sequential traces in a SEG-Y file.
         Note:
@@ -640,63 +922,170 @@ class Segy(object):
         return self.thead
 
 
-    def read_thead_multi_devtest(self,  tracenum1, tracenum2, skip=1, verbose=0):
+    def read_thead_multi(self, tracenum1, tracenum2, skip=1, verbose=0,
+                         as_array=True):
         """
         Read trace headers from sequential traces in a SEG-Y file.
-        Note:
-            tracenum1 is the number of the first trace to be read.
-            tracenum2 is the number of the last trace to be read.
-            Numbering starts at zero (e.g. first SEG-Y trace has tracenum = 0)
-            verbose is the trace increment to write info to the command line
+    
+        Header values are read through strided NumPy memory-map views. This
+        avoids a seek/read pair for every field on every trace.
+    
+        Parameters
+        ----------
+        tracenum1 : int
+            First trace to read, zero indexed.
+        tracenum2 : int
+            Exclusive upper trace number, as for ``range``.
+        skip : int, optional
+            Trace increment.
+        verbose : int, optional
+            If greater than zero, process trace headers in chunks of this many
+            traces and print a progress message after each chunk.
+            For example, verbose=100000 reports progress every 100,000 traces.
+        as_array : bool, optional
+            If True, return header values as NumPy arrays. If False, return
+            Python lists.
         """
-
-        #   Make sure the thead attribute is empty
-        self.thead = {}
-        for key in self.def_thead.keys():
-            self.thead.update({key:[]})
-
-        fd = open(self.filename, 'rb')
-        
-        count = 0
-        for i in range(tracenum1, tracenum2, skip):
-            
-            count = count + 1
-            if (verbose > 0) & (count == verbose+1):
-                print('reading trace %i of %i' % (i, tracenum2))
-                count = 1
-            
-            for key in self.def_thead.keys():
-                bpos = 3599 + i*self.trace_size + self.def_thead[key]['bpos']
-                fd.seek(bpos, 0)
-                buf = fd.read(self.def_thead[key]['nbyte'])
-                self.thead[key].append(buf[0])
-
-        fd.close()
-                
-        for key in self.def_thead.keys():
-            if self.def_thead[key]['fmt'] == '>ibm':
-                buf = self.thead[key]
-                buf = self._ibm2ieee_b_new(buf)
-                self.thead[key] = buf
-            
-            elif self.def_thead[key]['fmt'] == '<ibm':
-                buf = self.thead[key]
-                buf = self._ibm2ieee_l(buf)
-                self.thead[key].append(buf)
-
+        if skip <= 0:
+            raise ValueError('skip must be greater than zero')
+        if tracenum1 < 0 or tracenum2 < tracenum1:
+            raise ValueError('invalid trace range')
+    
+        tracenum2 = min(tracenum2, self.num_traces)
+        ntrace = len(range(tracenum1, tracenum2, skip))
+    
+        self.thead = {key: [] for key in self.def_thead}
+    
+        if ntrace == 0:
+            return self.thead
+    
+        raw = np.memmap(self.filename, dtype=np.uint8, mode='r')
+    
+        try:
+            # -------------------------------------------------------------
+            # Determine chunk size.
+            #
+            # With verbose=0, read everything in one chunk so performance
+            # remains equivalent to the current implementation.
+            # -------------------------------------------------------------
+            if verbose > 0:
+                chunk_size = int(verbose)
             else:
-                buf = self.thead[key]
-                buf = b''.join(buf)
-                ntrc = len(buf)
-                fmt_str = '%s%i%s' % (self.def_thead[key]['fmt'][0], ntrc, self.def_thead[key]['fmt'][1:])
-                #print(ntrc)
-                #print(fmt_str)
-                buf = unpack(fmt_str,buf)
-                self.thead[key] = buf
-
+                chunk_size = ntrace
+    
+            results = {key: [] for key in self.def_thead}
+    
+            for start in range(0, ntrace, chunk_size):
+    
+                stop = min(start + chunk_size, ntrace)
+                chunk_ntrace = stop - start
+    
+                # Actual SEG-Y trace corresponding to the first element
+                # of this chunk.
+                chunk_first_trace = tracenum1 + start * skip
+    
+                trace_stride = self.trace_size * skip
+    
+                for key, definition in self.def_thead.items():
+    
+                    fmt = definition['fmt']
+                    nbyte = definition['nbyte']
+    
+                    offset = (
+                        3600
+                        + chunk_first_trace * self.trace_size
+                        + definition['bpos'] - 1
+                    )
+    
+                    if fmt in ('>ibm', '<ibm'):
+                        # IBM floating point has no NumPy dtype.
+                        byte_view = np.ndarray(
+                            shape=(chunk_ntrace, nbyte),
+                            dtype=np.uint8,
+                            buffer=raw,
+                            offset=offset,
+                            strides=(trace_stride, 1)
+                        )
+    
+                        packed = np.ascontiguousarray(byte_view).tobytes()
+    
+                        if fmt == '>ibm':
+                            values = self._ibm2ieee_b_new(
+                                packed, nsamp=chunk_ntrace
+                            )
+                        else:
+                            values = self._ibm2ieee_l_new(
+                                packed, nsamp=chunk_ntrace
+                            )
+    
+                        values = np.asarray(values)
+    
+                    else:
+                        dtype = self._header_numpy_dtype(fmt, nbyte)
+    
+                        values = np.ndarray(
+                            shape=(chunk_ntrace,),
+                            dtype=dtype,
+                            buffer=raw,
+                            offset=offset,
+                            strides=(trace_stride,)
+                        )
+    
+                        # Copy because values is backed by the memmap.
+                        values = np.array(values)
+    
+                    results[key].append(values)
+    
+                # ---------------------------------------------------------
+                # Progress message
+                # ---------------------------------------------------------
+                if verbose > 0:
+                    print(
+                        'reading trace headers: %i of %i'
+                        % (stop, ntrace)
+                    )
+    
+            # Combine the individual chunks.
+            for key in self.def_thead:
+                values = np.concatenate(results[key])
+    
+                if as_array:
+                    self.thead[key] = values
+                else:
+                    self.thead[key] = values.tolist()
+    
+        finally:
+            del raw
+    
         return self.thead
 
-        
+
+    @staticmethod
+    def _header_numpy_dtype(fmt, nbyte):
+        """Translate a scalar ``struct`` header format to a NumPy dtype."""
+        endian = fmt[0] if fmt[0] in ('>', '<', '=', '@') else '='
+        code = fmt[-1]
+        dtype_codes = {
+            'b': 'i1', 'B': 'u1', '?': '?',
+            'h': 'i2', 'H': 'u2',
+            'i': 'i4', 'I': 'u4',
+            'l': 'i4', 'L': 'u4',
+            'q': 'i8', 'Q': 'u8',
+            'f': 'f4', 'd': 'f8',
+        }
+
+        if code == 'c' and nbyte == 1:
+            return np.dtype('S1')
+        if code not in dtype_codes:
+            raise ValueError("unsupported trace-header format: %r" % fmt)
+
+        dtype = np.dtype(endian + dtype_codes[code])
+        if dtype.itemsize != nbyte:
+            raise ValueError(
+                "trace-header format %r requires %i bytes, definition says %i"
+                % (fmt, dtype.itemsize, nbyte))
+        return dtype
+
         
     def read_thead_random(self,  traces, verbose=0):
         """
@@ -808,20 +1197,21 @@ class Segy(object):
         Writes a Binary header
 
         def_bhead = {'samp_rate':{'bpos':17, 'fmt':'>h', 'nbyte':2},
-                'num_samp':{'bpos':21, 'fmt':'>h', 'nbyte':2},
-                'samp_fmt':{'bpos':25, 'fmt':'>h', 'nbyte':2}
-                }
+                     'num_samp':{'bpos':21, 'fmt':'>h', 'nbyte':2},
+                     'samp_fmt':{'bpos':25, 'fmt':'>h', 'nbyte':2}
+                    }
 
         bhead = {'samp_rate':1000,
-                'num_samp':1500,
-                'samp_fmt':4
+                 'num_samp':1500,
+                 'samp_fmt':4
                 }
         """
+        self.bhead = bhead
         fd = open(self.filename, 'rb+')
-
+        
         for key in self.def_bhead.keys():
 
-            bpos = self.def_bhead[key]['bpos'] +3199
+            bpos = self.def_bhead[key]['bpos'] + 3199
             #print(bpos)
             fd.seek(bpos, 0)
             buf = pack(self.def_bhead[key]['fmt'], self.bhead[key])
@@ -848,7 +1238,7 @@ class Segy(object):
             if self.endian == 'big':
                 fmt = '>' + fmt
             elif self.endian == 'little':
-                fmt = '<' + 'fmt'
+                fmt = '<' + fmt
         
         with open(self.filename, 'rb+') as fd:
             abs_bpos = 3600 + bpos-1 + tracenum*self.trace_size
@@ -876,7 +1266,7 @@ class Segy(object):
             if self.endian == 'big':
                 fmt = '>' + fmt
             elif self.endian == 'little':
-                fmt = '<' + 'fmt'
+                fmt = '<' + fmt
         
         #  pack the list/array of data into bytes
         fmt = fmt[0] + str(len(data)) + fmt[1:]
@@ -1091,6 +1481,119 @@ class Segy(object):
         buf = sign * (16.0**(istic-64))*(mant/dividend)
         
         return buf.tolist()
+    
+
+    def _ieee2ibm_b_new(ieee_float_trace, nsamp=-1):
+        """
+        Convert IEEE Float (big endian byte order) to IBM Float.
+        """
+        
+        if nsamp == -1:
+            # Assuming you have a way to determine nsamp from your data
+            nsamp = len(ieee_float_trace) // 4 
+    
+        # We need to process each float individually
+        ibm_data = []
+    
+        for i in range(nsamp):
+            # Unpack the 4-byte IEEE float
+            raw_bytes = ieee_float_trace[i*4:(i+1)*4]
+            ieee_float = unpack('>f', raw_bytes)[0]
+            
+            # Handle zero
+            if ieee_float == 0.0:
+                ibm_data.extend([0, 0, 0, 0])
+                continue
+    
+            # Get sign
+            sign = 0
+            if ieee_float < 0:
+                sign = 128
+                ieee_float = -ieee_float
+    
+            # Handle a subnormal number if necessary
+            # Normalize the number for conversion to IBM's base-16
+            if ieee_float < 1.0:
+                 # Find the exponent and mantissa
+                 exponent = 0
+                 while ieee_float < 0.0625:  # 1/16
+                     ieee_float *= 16.0
+                     exponent -= 1
+            else:
+                 exponent = 0
+                 while ieee_float >= 1.0:
+                     ieee_float /= 16.0
+                     exponent += 1
+            
+            # Adjust mantissa for normalization
+            mantissa = ieee_float * (16**6)
+            
+            # Calculate the biased exponent
+            ibm_exponent = exponent + 64
+            
+            # Unpack the mantissa into 3 bytes
+            mant_bytes = pack('>I', int(mantissa))[1:]
+            
+            # Assemble the IBM float
+            ibm_bytes = [sign + ibm_exponent] + list(mant_bytes)
+            ibm_data.extend(ibm_bytes)
+        
+        return bytes(ibm_data)
+    
+    
+    def _ieee2ibm_l_new(ieee_float_trace, nsamp=-1):
+        """
+        Convert IEEE Float (little endian byte order) to IBM Float.
+        """
+    
+        if nsamp == -1:
+            nsamp = len(ieee_float_trace) // 4
+    
+        ibm_data = []
+    
+        for i in range(nsamp):
+            # Unpack the 4-byte IEEE float using little-endian byte order
+            raw_bytes = ieee_float_trace[i*4:(i+1)*4]
+            ieee_float = unpack('<f', raw_bytes)[0]
+    
+            # Handle zero
+            if ieee_float == 0.0:
+                ibm_data.extend([0, 0, 0, 0])
+                continue
+    
+            # Get sign
+            sign = 0
+            if ieee_float < 0:
+                sign = 128
+                ieee_float = -ieee_float
+    
+            # Normalize the number for conversion to IBM's base-16
+            if ieee_float < 1.0:
+                 # Find the exponent
+                 exponent = 0
+                 while ieee_float < 0.0625:  # 1/16
+                     ieee_float *= 16.0
+                     exponent -= 1
+            else:
+                 exponent = 0
+                 while ieee_float >= 1.0:
+                     ieee_float /= 16.0
+                     exponent += 1
+            
+            # Adjust mantissa for normalization
+            mantissa = ieee_float * (16**6)
+            
+            # Calculate the biased exponent
+            ibm_exponent = exponent + 64
+            
+            # Unpack the mantissa into 3 bytes
+            mant_bytes = pack('<I', int(mantissa))[:3]
+            
+            # Assemble the IBM float in little-endian byte order
+            ibm_bytes = [int(mant_bytes[0]), int(mant_bytes[1]), int(mant_bytes[2]), sign + ibm_exponent]
+            ibm_data.extend(ibm_bytes)
+    
+        return bytes(ibm_data)
 
 
 
@@ -1137,10 +1640,12 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace,
     for i in range(0, 200):
         bhead.append(0)
     
-    bhead[8] = samp_rate
-    bhead[10] = num_samp
-    bhead[12] = fmt_code
-
+    bhead[8] = int(samp_rate)
+    bhead[10] = int(num_samp)
+    bhead[12] = int(fmt_code)
+    
+    print(bhead)
+    
     #   Build null Trace header
     thead = []
     for i in range(0, 120):
@@ -1154,17 +1659,28 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace,
 
     #   Start writing to disk
     with open(filename, 'w') as fd:
-        for buf in ehead:
-            fd.write(buf)
+        for each in ehead:
+            fd.write(each)
             
-    with open(filename, 'ab') as fd:
+    with open(filename, 'a+b') as fd:
+        
+        # Seek past the EBCDIC header
+        fd.seek(3199, 0)
         
         #   Do appropriate things for big endian
         if endian=='big':
-            for buf in bhead:
-                fd.write(pack('>h', buf))
-    
+            print('Working on big endian branch...')
             fmt_str = '>' + fmt_str
+            
+            for each in bhead:
+                buf = pack('>h', each)
+                fd.write(buf)
+                
+                fd.seek(-2, 1)
+                buf = fd.read(2)
+                eachin = unpack('>h', buf)[0]
+                print(fd.tell(), each, eachin)
+                fd.seek(2, 1)
             
             count = 0
             for i in range(0, num_trace):
@@ -1173,28 +1689,43 @@ def write_blank_segy_file(filename, fmt_code, samp_rate, num_samp, num_trace,
                     print('writing trace %i of %i' % (i, num_trace))
                     count = 1
                     
-                for buf in thead:
-                    fd.write(pack('>h', buf))
+                for each in thead:
+                    buf = pack('>h', each)
+                    fd.write(buf)
                     
-                for buf in tdata:
-                    fd.write(pack(fmt_str, buf))
+                for each in tdata:
+                    buf = pack(fmt_str, each)
+                    fd.write(buf)
     
-        #   Do appropriate things for little endian
+        #   Do appropriate things for big endian
         if endian=='little':
-            for buf in bhead:
-                fd.write(pack('<h', buf))
-    
+            print('Working on little endian branch...')
+            fmt_str = '<' + fmt_str
+            
+            for each in bhead:
+                buf = pack('<h', each)
+                fd.write(buf)
+
+                fd.seek(-2, 1)
+                buf = fd.read(2)
+                eachin = unpack('<h', buf)[0]
+                print(fd.tell(), each, eachin)
+                fd.seek(2, 1)
+            
+            count = 0
             for i in range(0, num_trace):
                 count += 1
                 if (verbose > 0) & (count == verbose+1):
                     print('writing trace %i of %i' % (i, num_trace))
                     count = 1
                     
-                for buf in thead:
-                    fd.write(pack('<h', buf))
-    
-                for buf in tdata:
-                    fd.write(pack(fmt_str, buf))
+                for each in thead:
+                    buf = pack('<h', each)
+                    fd.write(buf)
+                    
+                for each in tdata:
+                    buf = pack(fmt_str, each)
+                    fd.write(buf)
 
 
 def write_blank_segy_file_v2(filename, fmt_code, samp_rate, num_samp, num_trace, 
@@ -1350,7 +1881,7 @@ def plot_seis(ax, tdata, t_min=0, t_max=0, tr_min=0, tr_max=0, samp_rate=0.002,
     return im
 
 
-def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
+def plot_wigva1(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
           line=True, lw=0.25, lcolor='k', pcolor=[0.2, 0.2, 1.0],
           tcolor=[1.0, 0.2, 0.2], alpha=0.5):
     """
@@ -1405,7 +1936,7 @@ def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False,
                 ax.plot(trc, t, lcolor, lw=lw)
 
 
-def plot_wigva2(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
+def plot_wigva(ax, tdata, t, trcstart=0, excursion=1, peak=False, trough=False, 
           line=True, lw=0.25, lcolor='k', pcolor=[0.2, 0.2, 1.0],
           tcolor=[1.0, 0.2, 0.2], alpha=0.5, clipval=None):
     """

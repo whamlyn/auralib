@@ -13,7 +13,16 @@ try:
     import iapws
 except:
     print('iapws package is not installed. Steam properties\ncannot be computed')
-    print('This package can be installed by running pip "install iapws"')
+    print('This package can be installed by running "pip install iapws"')
+
+try:
+    # CoolProp used to calculated CO2 properties
+    # can be installed with pip install CoolProp or conda install conda-forge::coolprop
+    from CoolProp.CoolProp import PropsSI
+except:
+    print('CoolProp package is not installed. CO2 properties\ncannot be computed')
+    print('This package can be installed by running:')
+    print('   pip install CoolProp or conda install conda-forge::coolprop')
 
 
 ### UTILITIES: Miscellaneous functions, constants, etc...
@@ -46,7 +55,7 @@ def make_fluidset(T, P, S, API, GOR, SG, T_steam=None, P_steam=None,
     elastic properties.
 
     T = Temp °C
-    P = Pressure MPa
+    P = Pressure Pa
     S = Salinity ppm
     API = Oil Gravity (° API)
     GOR = Ratio of disolved gas to oil (v/v)
@@ -54,7 +63,7 @@ def make_fluidset(T, P, S, API, GOR, SG, T_steam=None, P_steam=None,
     Tsteam = temperature of steam °C (optional)
     Psteam = pressure of steam MPa (optional)
     """
-
+    
     K_wat, R_wat = bw_brine(S, T, P)
     K_oil, R_oil = bw_oil(SG, API, GOR, T, P, verbose=verbose, fixGORmax=fixGORmax)
     K_gas, R_gas = bw_gas(SG, T, P)
@@ -71,7 +80,7 @@ def make_fluidset(T, P, S, API, GOR, SG, T_steam=None, P_steam=None,
     return fluidset
 
 
-def prat_vel(Vp, Vs):
+def prat_from_vels(Vp, Vs):
     """
     Calculate Poisson's Ratio from P and S velocities.
 
@@ -86,13 +95,24 @@ def prat_vel(Vp, Vs):
         prat = Poisson's ratio
     """
 
-    Vp = np.array(Vp)
-    Vs = np.array(Vs)
     prat = 0.5 * (Vp**2.0 - 2.0*Vs**2.0)/(Vp**2.0 - Vs**2.0)
 
     return prat
 
 
+def lame_from_vels(Vp, Vs, Rho):
+    """
+    Convenience function to compute lambda*rho and mu*rho from Vp, Vs, and Rho
+    values. Input units should be m/s and kg/m3.
+    """
+    Ip = Rho*Vp
+    Is = Rho*Vs
+    LRho = Ip**2 - 2*Is**2
+    MRho = Is**2
+    
+    return LRho, MRho
+
+    
 def mod_from_vels(Vp, Vs, Rho):
     """
     Convenience function to compute bulk and shear moduli from
@@ -116,6 +136,17 @@ def vels_from_mod(K, G, Rho):
 
     return Vp, Vs
 
+def youngs_from_vels(Vp, Vs, Rho):
+    """
+    Convenience function to compute Young's modulus from Vp, Vs, and Rho logs
+    """
+    
+    K = Rho*(Vp**2.0 - 4.0/3.0*Vs**2)
+    G = Rho*Vs**2.0
+    
+    E = 9*K*G/(3*K+G)
+    
+    return E
 
 def rho_minfrac(rho_min, frac):
     """
@@ -335,6 +366,10 @@ def rho_matrix_from_volset(minset, volset):
 def woods_mixing_from_sets(fluidset, satset):
     """
     Function to mix fluids using Woods mixing and fluid and saturation sets.
+    
+    returns:
+        K_fluid
+        R_fluid
     """
 
     K_fluid = 0.0
@@ -418,39 +453,6 @@ def sets_fluid_mixing(satset, fluidset, mixtype='woods', briexp=3.0):
 
 ###  FLUID REPLACEMENT MODELLING
 
-def calc_co2(P):
-    """
-    Calculate elastic properties of Carbon Dioxide at a given pressure
-
-    Inputs:
-        P - Pressure in MPa
-
-    Outputs:
-        K_co2 - Bulk Modulus of Carbon Dioxide
-        R_co2 - Density of Carbon Dioxide
-
-    reference:
-    http://www.geoconvention.com/archives/2015/202_GC2015_Rock_physics_study_of_the_Nisku_aquifer.pdf
-    """
-
-    if type(P)==int:
-        P = float(P)
-
-    if type(P) in (list, tuple):
-        P = np.array(P, dtype=np.float)
-
-    K_co2 = 12.8*P - 131.0
-    R_co2 = 138.2*np.log(P-11.15) + 429
-
-    if (P<15.0) | (P>32.0):
-        print('Bulk modulus model only valid from 15 - 32 MPa')
-
-    if (P>15.0) | (P>40.0):
-        print('Bulk density model only valid from 15 - 40 MPa')
-
-    return K_co2, R_co2
-
-
 def bw_brine(S, T, P, gwr=0.0):
     """
     Batzle-Wang calculation for brine
@@ -461,7 +463,7 @@ def bw_brine(S, T, P, gwr=0.0):
     Inputs:
         S = Salinity (PPM)
         T = Temperature in degrees celcius
-        P = Pressure in Mpa
+        P = Pressure in Pa
         gwr = Gas Water Ratio (v/v)
 
     Outputs:
@@ -474,7 +476,8 @@ def bw_brine(S, T, P, gwr=0.0):
     #S = float(S)
     #T = float(T)
     #P = float(P)
-
+    
+    P = P*1e-6        # convert pressure from Pa to MPa for use in B-W equations
     S = S * 10**-6    # convert from PPM to fractions of one
 
     # Calculate density of pure water
@@ -528,8 +531,8 @@ def bw_gas(SG, T, P):
 
     Inputs:
         SG = Specific gravity of gas (gas density/air density @ 1atm, 15.6 celcius)
-        T = Temperature in degrees celcius
-        P = Pressure in Mpa
+        T = Temperature (°C)
+        P = Pressure (Pa)
 
     Outputs:
         Kgas = Bulk Modulus of gas (Pa)
@@ -539,6 +542,8 @@ def bw_gas(SG, T, P):
     #SG = float(SG)
     #T = float(T)
     #P = float(P)
+    
+    P = P*1e-6 # convert pressure from Pa to MPa for use in B-W equations
 
     Ta = T + 273.15
 
@@ -576,14 +581,16 @@ def bw_max_dissolved_gas(SG, API, T, P):
 
     Inputs:
         SG = Specific gravity of gas
-        API = Oil gravity in API units
-        T = Temperature in degress celcius
-        P = Pressure in MPa
+        API = Oil gravity (API)
+        T = Temperature (°C)
+        P = Pressure (Pa)
 
     Output:
         GOR_max (v/v)
     """
-
+    
+    P = P*1e-6  # convert pressure from Pa to MPa for use in B-W equations
+    
     Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
     GOR_max = Rg_max
 
@@ -603,13 +610,15 @@ def bw_oil(SG, API, GOR, T, P, verbose=False, fixGORmax=True):
         API = Oil gravity in API units (-1=max dissolved gas)
         GOR = Gas to Oil Ratio (-1 for max disolved gas)
         T   = Temperature in degrees celcius
-        P   = Pressure in Mpa
+        P   = Pressure in Pa
 
     Outputs:
         Koil = Bulk modulus of in oil (m/s)
         Roil = Density of oil (kg/m3)
     """
-
+    
+    P = P*1e-6  # convert pressure to MPa for use in Batzle-Wang equations
+    
     #SG = float(SG)
     #API = float(API)
     #GOR = float(GOR)
@@ -617,7 +626,7 @@ def bw_oil(SG, API, GOR, T, P, verbose=False, fixGORmax=True):
     #P = float(P)
 
     #Rg_max = 2.03*SG*(P*np.exp(0.02878*API-0.00377*T))**1.205
-    Rg_max = bw_max_dissolved_gas(SG, API, T, P)
+    Rg_max = bw_max_dissolved_gas(SG, API, T, P*1e6)
 
     if verbose:
         print('Maximum GOR for this oil is %f v/v' % Rg_max)
@@ -680,7 +689,7 @@ def iapws_steam(P, T):
     Parameters
     ----------
     P : float
-        Pressure (MPa)
+        Pressure (Pa)
     T : float
         Temperature (Celcius)
 
@@ -693,7 +702,9 @@ def iapws_steam(P, T):
     phase : string
             phase of steam at current P/T conditions (liquid/vapour)
     """
-
+    
+    P = P*1e-6 # convert pressure from Pa to MPa
+    
     # Convert temperatures from Celcius to Kelvin (required by iapws model)
     Tk = T + 273.15
 
@@ -708,6 +719,115 @@ def iapws_steam(P, T):
                                   stm.region)
 
     return K_steam, R_steam, phase
+
+
+def calc_co2_model1(P):
+    """
+    Calculate elastic properties of Carbon Dioxide at a given pressure
+
+    Inputs:
+        P - Pressure in Pa
+
+    Outputs:
+        K_co2 - Bulk Modulus of Carbon Dioxide
+        R_co2 - Density of Carbon Dioxide
+
+    reference:
+    http://www.geoconvention.com/archives/2015/202_GC2015_Rock_physics_study_of_the_Nisku_aquifer.pdf
+    Also CREWES report by Nowroozi and Lawton, 2014
+    """
+
+    P = P*1e-6 # convert pressure from Pa to MPa for use in B-W equations
+    
+    if type(P)==int:
+        P = float(P)
+
+    if type(P) in (list, tuple):
+        P = np.array(P, dtype=np.float)
+
+    K_co2 = 12.8*P - 131.0
+    R_co2 = 138.2*np.log(P-11.15) + 429
+
+    if (P<15.0) | (P>32.0):
+        print('Bulk modulus model only valid from 15 - 32 MPa')
+
+    if (P>15.0) | (P>40.0):
+        print('Bulk density model only valid from 15 - 40 MPa')
+
+    return K_co2, R_co2
+
+
+def calc_co2(T, P, return_phase=False):
+    """
+    Wrapper around the CoolProp library to return elastic properties for CO2
+    as a function of temperature and pressure. Requires CoolProp to be
+    installed in the Python environment.
+    
+    Inputs:
+        T (float) - Temperature of CO2 in °C
+        P (float) - Pressure of CO2 in Pa
+        return_phase (string) - Optionally return the phase state of the CO2
+        
+    Returns:
+        K_co2 (float) - Bulk modulus of CO2 in m/s
+        R_co2 (float) - Bulk density of CO2 in km/m3
+        phase_co2 (float) - Phase state of CO2 (optional)
+        
+    """
+    R_co2 = PropsSI('D', 'T', T, 'P', P, 'CO2')
+    vp_co2 = PropsSI('A', 'T', T, 'P', P, 'CO2')
+    phase_co2_code = PropsSI('PHASE', 'T', T, 'P', P, 'CO2')
+    K_co2 = R_co2*vp_co2**2
+    
+    phase_dict = {0: 'Liquid', 1: 'Supercritical', 2: 'Supercritical Gas',
+                  3: 'Supercritical liquid', 4: 'Solid?', 5: 'Gas'}
+    phase_co2 = phase_dict[phase_co2_code]
+    
+    if return_phase:
+        return K_co2, R_co2, phase_co2
+    else:
+        return K_co2, R_co2
+
+
+def calc_ice(P, T):
+    """
+    Calculate elastic properties of compacted, polycrystalline ice. 
+    
+    Reference: Rock Physics Handbook 2nd Ed.
+
+    Parameters
+    ----------
+    P : float
+        Pressure (Pa)
+    T : float
+        Temperature (Celcius)
+
+    Returns
+    -------
+    Vp : float
+         P-wave velocity of ice (m/s)
+    Vs : float
+         S-wave velocity of ice (m/s)
+    R : float
+        Density of ice (g/cc)
+    """
+    
+    # convert MPa to psi... it's not totally clear in the RPH
+    # what the actual units should be for pressure, but the 
+    # caption on table A.5.1 lists temperatuers in celcius and
+    # "piston pressure" in psi... so we're doing a conversion
+    # here from MPa to psi
+    Pmpa = P*1e-6
+    Ppsi = Pmpa * 145.038
+    T_kelvin = 273.15 + T
+    
+    Vp = -2.80*T + 1.98e-3*Ppsi + 3870
+    Vs = -1.31*T + 6.4e-7*Ppsi + 1949.3
+    
+    ice = iapws._Ice(T_kelvin, Pmpa)
+    Rho = ice['rho']
+    
+    return Vp, Vs, Rho
 
 
 
@@ -782,12 +902,28 @@ def gassmann_update_rho(Rho_sat, Rho_f1, Rho_f2):
 def cizshap_sat2dry(phi, Ms, Mm, Mf, Mphi):
     """
     Saturated to dry rock using Ciz & Shapiro algorithm.
-    *** REQUIRES TESTING ***
+    
+    Useage:
+        Md = cizshap_sat2dry(phi, Ms, Mm, Mf, Mphi)
+    
+    Inputs:
+        phi = Porosity (fraction)
+        Ms = saturated rock bulk or shear modulus (Pa)
+        Mm = matrix material bulk or shear modulus (Pa)
+        Mf = pore filling material bulk or shear modulus (Pa)
+        Mphi = pore space bulk or shear modulus (Pa); this parameter is
+               generally assumed to be the same as the matrix material moduli
+    
+    Outputs:
+        Md = dry rock bulk or shear modulus (Pa)
+    
+    Note: This function was giving problems but appears to be working now.
+          Probably best to use with caution until properly validated.
     """
-
-    A = Mm*(Ms*Mf*(Mphi-Mm*phi)+Ms*Mm*Mphi - Mm*Mf*Mphi)
-    B = Ms*Mf*Mphi + Mm*(Mm*Mphi*phi-Mf*(Mm*phi+Mphi))
-
+    
+    A = -(Mm**2*Mphi*Mf - Mm**2*Ms*Mphi*phi + Mm**2*Ms*Mf*phi - Mm*Ms*Mphi*Mf)
+    B = -Mm**2*Mf*phi - Mm*Mphi*Mf + Mm**2*Mphi*phi + Ms*Mphi*Mf
+    
     Md = A/B
 
     return Md
@@ -796,13 +932,30 @@ def cizshap_sat2dry(phi, Ms, Mm, Mf, Mphi):
 def cizshap_dry2sat(phi, Md, Mm, Mf, Mphi):
     """
     Dry to saturated rock using Ciz & Shapiro algorithm.
-    *** REQUIRES TESTING ***
+    
+    Useage:
+        Ms = cizshap_dry2sat(phi, Md, Mm, Mf, Mphi)
+    
+    Inputs:
+        phi = Porosity (fraction)
+        Md = dry rock bulk or shear modulus (Pa)
+        Mm = matrix material bulk or shear modulus (Pa)
+        Mf = pore filling material bulk or shear modulus (Pa)
+        Mphi = pore space bulk or shear modulus (Pa); this parameter is
+               generally assumed to be the same as the matrix material moduli
+    
+    Outputs:
+        Ms = saturated rock bulk or shear modulus (Pa)
+    
+    Note: This function was giving problems but appears to be working now.
+          Probably best to use with caution until properly validated.
+          
     """
-
-    C = Mm*(Md*Mf*(Mm*phi+Mphi)-Md*Mm*Mphi*phi-Mm*Mf*Mphi)
-    D = Md*Mf*Mphi+Mm*(Mm*Mf*phi-Mm*Mphi*phi-Mf-Mphi)
-
-    Ms = C/D
+    
+    C = (1/Md - 1/Mm)**2
+    D = phi*(1/Mf - 1/Mphi) + (1/Md - 1/Mm)
+    
+    Ms = (1/Md - C/D)**-1
 
     return Ms
 
@@ -949,11 +1102,11 @@ def friable_sand(Ks, Gs, phi, phic, P_eff, n=-1, f=1.0):
 
     A = (phi/phic)/(K_hm + 4/3*G_hm)
     B = (1 - phi/phic)/(Ks + 4.0/3.0*G_hm)
-    K_dry = (A+B)**-1 - 4.0/3.0*G_hm
+    K_dry = (A + B)**-1 - 4.0/3.0*G_hm
 
-    C = (phi/phic)/(G_hm+z)
-    D = (1.0-phi/phic)/(Gs + z)
-    G_dry = (C+D)**-1 - z
+    C = (phi/phic)/(G_hm + z)
+    D = (1.0 - phi/phic)/(Gs + z)
+    G_dry = (C + D)**-1 - z
 
     return K_dry, G_dry
 
@@ -1010,13 +1163,13 @@ def contact_cem(Km, Gm, Kc, Gc, phi, phic, n=-1, f=1.0):
     return K_dry, G_dry
 
 
-def cemented_sand(Ks, Gs, Kc, Gc, phi, phic, S_cem, n=-1, f=1.0):
+def cemented_sand(Ks, Gs, Kc, Gc, phi, phic, S_cem, n=None, f=1.0):
     """
     Cemented Sand rock physics model
     Reference: Rock Physics Handbook 2nd Ed., p.255
 
     Usage:
-        Kconst, Gconst = cemented_sand(K, G, Kc, Gc, phi, phic, n)
+        Kconst, Gconst = cemented_sand(K, G, Kc, Gc, phi, phic, S_cem, n)
 
     Inputs:
         Ks = Bulk modulus of mineral matrix
@@ -1025,14 +1178,16 @@ def cemented_sand(Ks, Gs, Kc, Gc, phi, phic, S_cem, n=-1, f=1.0):
         Gc = Shear modulus of cemeting mineral
         phi = porosity
         phic = critical porosity
+        S_cem = cement as fraction of porosity
         n = coordination number
+        f = shear reduction factor
 
     Outputs:
         K_dry = bulk modulus of dry rock from Cemented Sand model
         G_dry = shear modulus of dry rock from Cemented Sand model
     """
 
-    if n==-1:
+    if n==None:
         n = coord_num(phic)
 
     nu_s = 0.5*(Ks/Gs - 2/3) / (Ks/Gs + 1/3)
@@ -1145,23 +1300,89 @@ def critical_porosity_model(phi, phi_c=0.40, K_fl=2.56, K_m=36.6, G_m=45.0):
 
 ###  CARBONATE/TIGHT MODELS
 
-def kustertoksoz(K_m, G_m, Ki, Gi, xi, incl=['spheres']):
-
-    zeta_m = G_m/6 * (9*K_m + 8*G_m)/(K_m + 2*G_m)
-
-    Pm1ken = (K_m + 4/3*G_m)/(K1 + 4/3*G_m)
-    Qm1 = (G_m + zeta_m)/(G1 + zeta_m)
-
-    A = x1*(K1-K_m)*Pm1
-    B = x1*(G1-G_m)*Qm1
-
-    K_kt = (4/3*A*G_m + 4/3*K_m*G_m + K_m**2)/(K_m + 4/3*G_m - A)
-    G_kt = (B*zeta_m + G_m**2 + G_m*zeta_m)/(G_m + zeta_m - B)
-
-    print(K_kt*1e-9)
-    print(G_kt*1e-9)
-
-    return K_kt, G_kt
+def calc_kt(Km, Gm, K1, G1, x1, inclusion='spheres', alpha=0.1):
+    """
+    Function to calculate Kuster-Toksoz effective media model for a materia
+    comprised of a matrix with a single type of inclusion.
+    Ref: Rock Physics Handbook, 2nd Ed.
+    
+    Inputs:        
+        Km = Bulk Modulus (Pa) of matrix material
+        Gm = Shear Modulus (Pa) of matrix material
+        K1 = Bulk Modulus (Pa) of inclusion filling material
+        G1 = Shear Modulus (Pa) of inclusion filling material
+        x1 = volume fraction (v_inclusions/v_matrix) of inclusions in matrix
+        inclusion = Inclusion type to model (spheres, disks, or cracks)
+        alpha = Crack aspect ratio for crack-type inclusions
+    Returns:
+        Kkt, Gkt
+    """
+    
+    Zm = Gm/6 * (9*Km + 8*Gm)/(Km + 2*Gm)
+    
+    
+    if inclusion=='spheres':
+        
+        try:
+            Z1 = G1/6 * (9*K1 + 8*G1)/(K1 + 2*G1)
+        except:
+            Z1 = 0.0
+        
+        try:
+            Pm1 = (Km + 4/3*Gm)/(K1 + 4/3*Gm)
+        except:
+            Pm1 = 0.0
+        
+        try:
+            Qm1 = (Gm + Zm)/(G1 + Zm)
+        except:
+            Qm1 = 0.0
+    
+    if inclusion=='disks':
+        
+        try:
+            Z1 = G1/6 * (9*K1 + 8*G1)/(K1 + 2*G1)
+        except:
+            Z1 = 0.0
+        
+        try:
+            Pm1 = (Km + 4/3*G1)/(K1 + 4/3*G1)
+        except:
+            Pm1 = 0.0
+        
+        try:
+            Qm1 = (Gm + Z1)/(G1 + Z1)
+        except:
+            Qm1 = 0.0
+    
+    if inclusion=='cracks':
+        
+        beta_m = Gm * (3*Km + Gm)/(3*Km + 4*Gm)
+        gamma_m = Gm * (3*Km + Gm)/(3*Km + 7*Gm)
+        
+        try:
+            Z1 = G1/6 * (9*K1 + 8*G1)/(K1 + 2*G1)
+        except:
+            Z1 = 0.0
+        
+        try:
+            Pm1 = (Km + 4/3*G1)/(K1 + 4/3*G1 + np.pi*alpha*beta_m)
+        except:
+            Pm1 = 0.0
+        
+        try:
+            Qm1 = 1/5*(1 + 8*Gm/(4*G1 + np.pi*alpha*(Gm+2*beta_m)) + 2 * (K1 + 2/3*(G1 + Gm))/(K1 + 4/3*G1 + np.pi*alpha*beta_m))
+        except:
+            Qm1 = 0.0
+            
+            
+    XK = x1*(K1-Km)*Pm1
+    XG = x1*(G1-Gm)*Qm1
+    
+    Kkt = (4/3*Gm*(XK+Km)+Km**2)/(Km + 4/3*Gm - XK)
+    Gkt = (4/3*Zm*(XG+Gm)+Gm**2)/(Gm + 4/3*Zm - XG)
+    
+    return Kkt, Gkt
 
 
 ###  SHALE MODELS
@@ -1174,9 +1395,9 @@ def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2
         c33d, c44d = khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2=1.59)
 
     Inputs:
-        c33m = c33 mineral stiffness (GPa)
-        c44m = c44 mineral stiffness (GPa)
-        ves = vertical effective stress (MPa)
+        c33m = c33 mineral stiffness (Pa)
+        c44m = c44 mineral stiffness (Pa)
+        ves = vertical effective stress (Pa)
         phi = porosity (fraction)
         n0 = crack density at ves=0 (default=0.6)
         d = stress sensitivity parameter (default = 0.06)
@@ -1188,13 +1409,69 @@ def khadeeva_vernik2014(c33m, c44m, ves, phi, n0=0.6, d=0.06, P=6.0, c1=1.94, c2
         c33d = c33 mineral stiffness of unsaturated shale (GPa)
         c44d = c44 mineral stiffness of unsaturated shale (GPa)
     """
-
+    
+    # Convert moduli and stresses from SI to units required by the rock physics
+    # model
+    c33m = c33m*1e-9  # convert Pa to GPa
+    c44m = c44m*1e-9  # convert Pa to GPa
+    ves = ves*1e-6    # convert Pa to MPa
+        
     #  Khadeeva-Vernik Moduli
     c33d = c33m / (1 + P*phi + c1*n0*np.exp(-d*ves))
     c44d = c44m / (1 + P*phi + c2*n0*np.exp(-d*ves))
-
+    
+    # convert rock physics model outputs to Pa from GPa
+    c33d = c33d*1e9
+    c44d = c44d*1e9
+    
     return c33d, c44d
 
+
+def vernik_consolidated_sand(Km, Gm, ves, phi, b=8.0, n0=None, p=None, d=0.07, A=2.46, B=1.59):
+    """
+    Still a working version of this function. From Lev's texbook.
+    
+    Parameters
+    ----------
+    Km : Float, numpy array
+        Bulk modulus of matrix material (Pa).
+    Gm : Float, numpy array
+        Shear modulus of matrix material (Pa).
+    ves : Float, numpy array
+        Vertical effective stress (Pa).
+    phi : Float, numpy array
+        Porosity (fraction).
+    b : Float, optional
+        Coefficient for computing porosity shape factor. Valid range is 8<b<12
+
+    Returns
+    -------
+    Kdry : Float, numpy array
+        Dry rock bulk modulus (Pa).
+    Gdry : Float, numpy array
+        Dry rock shear modulus (Pa).
+
+    """
+    Km = Km*1e-9
+    Gm = Gm*1e-9
+    ves = ves*1e-6
+    
+    if p == None:
+        p = 3.6 + b*phi
+        q = 3.6 + b*phi
+    else:
+        q=p
+    
+    if n0 == None:
+        n0 = 0.3 + 1.6*phi
+    
+    Kdry = Km*(1 + p*phi/(1-phi) * A * n0*np.exp(-d*ves)/(1-phi))**-1
+    Gdry = Gm*(1 + q*phi/(1-phi) * B * n0*np.exp(-d*ves)/(1-phi))**-1
+    
+    Kdry = Kdry*1e9
+    Gdry = Gdry*1e9
+    
+    return Kdry, Gdry
 
 
 ###  INCLUSION MODELS
@@ -1231,9 +1508,10 @@ def calc_FT(alpha, K, mu, K_prime=0.0, mu_prime=0.0):
 
 ### EMPIRICAL MODELS: Vp-Vs
 
-def castagna_mudrock(Vp, B=0.8621, C=-1.1724):
+def castagna_mudrock(Vp, B=0.8621, C=-1172.4):
     """
     Vs from Vp using Castagna's mudrock line.
+    Velocities in km/s
     """
 
     Vs = B*Vp + C
@@ -1241,10 +1519,11 @@ def castagna_mudrock(Vp, B=0.8621, C=-1.1724):
     return Vs
 
 
-def gc_sandstone(Vp, B=0.80416, C=-0.85588):
+def gc_sandstone(Vp, B=0.80416, C=-855.88):
     """
     Vs from Vp using Greenberg-Castagna sandstone coefficients.
-
+    Velocities in m/s
+    
     Vs = A*Vp**2.0 + B*Vp + C
     """
 
@@ -1253,10 +1532,11 @@ def gc_sandstone(Vp, B=0.80416, C=-0.85588):
     return Vs
 
 
-def gc_shale(Vp, B=0.76969, C=-0.86735):
+def gc_shale(Vp, B=0.76969, C=-867.35):
     """
     Vs from Vp using Greenberg-Castagna shale coefficients.
-
+    Velocities in m/s
+    
     Vs = A*Vp**2.0 + B*Vp + C
     """
 
@@ -1265,10 +1545,11 @@ def gc_shale(Vp, B=0.76969, C=-0.86735):
     return Vs
 
 
-def gc_limestone(Vp, A=-0.05508, B=1.01677, C=-1.03049):
+def gc_limestone(Vp, A=-5.508e-5, B=1.01677, C=-1030.49):
     """
     Vs from Vp using Greenberg-Castagna limestone coefficients.
-
+    Velocities in m/s
+    
     Vs = A*Vp**2.0 + B*Vp + C
     """
 
@@ -1277,10 +1558,11 @@ def gc_limestone(Vp, A=-0.05508, B=1.01677, C=-1.03049):
     return Vs
 
 
-def gc_dolomite(Vp, B=0.58321, C=-0.07775):
+def gc_dolomite(Vp, B=0.58321, C=-77.75):
     """
     Vs from Vp using Greenberg-Castagna dolomite coefficients.
-
+    Velocities in m/s
+    
     Vs = A*Vp**2.0 + B*Vp + C
     """
 
@@ -1289,12 +1571,40 @@ def gc_dolomite(Vp, B=0.58321, C=-0.07775):
     return Vs
 
 
-def murphy_simm_quartz(Vp, B=0.8029, C=-0.7509):
+# Dictionary of standard Greenberg-Castagna fit coefficients
+gc_coef = {'sand':      {'a0':  -855.88, 'a1': 0.80416, 'a2':  0.0},
+           'shale':     {'a0':  -867.35, 'a1': 0.76969, 'a2':  0.0},
+           'limestone': {'a0': -1030.49, 'a1': 1.01677, 'a2': -5.508e-5},
+           'dolomite':  {'a0':   -77.75, 'a1': 0.58321, 'a2':  0.0}}
+
+def greenberg_castagna(Vp, Vsand, Vshale, Vlime, Vdol, gc_coef=gc_coef):
+    """
+    Predict Vs from Vp using Greenberg-Castagna method.
+    Velocities in m/s
+    Volume fractions in v/v
+    """
+    
+    c = gc_coef
+    
+    Vs_sand = c['sand']['a0'] + c['sand']['a1']*Vp
+    Vs_shale = c['shale']['a0'] + c['shale']['a1']*Vp
+    Vs_lime = c['limestone']['a0'] + c['limestone']['a1']*Vp + c['limestone']['a2']*Vp**2
+    Vs_dol = c['dolomite']['a0'] + c['dolomite']['a1']*Vp
+    
+    Vs1 = Vsand*Vs_sand + Vshale*Vs_shale + Vlime*Vs_lime + Vdol*Vs_dol
+    Vs2 = (Vsand/Vs_sand + Vshale/Vs_shale + Vlime/Vs_lime + Vdol/Vs_dol)**-1
+    Vs_gc = 0.5*(Vs1+Vs2)
+    
+    return Vs_gc
+    
+
+def murphy_simm_quartz(Vp, B=0.8029, C=-750.9):
     """
     Vs from Vp using the Murphy-Simm quartz relationship.  Very similar to the
     Greenberg-Castagna sandstone line but often fits very clean high porosity
     sandstone a bit better (from RokDoc Help documents).
-
+    Velocities in m/s
+    
     Vs = A*Vp**2.0 + B*Vp + C
     """
 
@@ -1309,17 +1619,22 @@ def unconsolidated_sand_line(Vs):
     Castagna sandstone line but returns a smaller Vs to account for lack of
     consolidation.  Not the same as friable sand model (from RokDoc Help
     documents; coefficients from Rob Simm).
+    Velocities in m/s
     """
 
     a = 2.3311
     b = -0.2886
     c = 6.05
     d = 4.09
-
+    
+    Vs = Vs/1000 # convert m/s to km/s
+    
     g = a + b*Vs
     Vp = 2**g + Vs**g *(c**g - 2**g)/(d**g)
     Vp = Vp**(1.0/g)
-
+    
+    Vp = Vp*1000 # convert from km/s to m/s
+    
     return Vp
 
 
@@ -1375,47 +1690,83 @@ def han(phi, Vclay, Peff=20.0):
 
 ### EMPIRICAL MODELS: Vp-Density
 
-def gardner_sand(Vp, A=1.75, B=0.265):
+def gardner_sand(data, A=1.75, B=0.265, out='Rho'):
     """
     Vp in km/sec
+    Rho in g/cc
     """
+    
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
 
-    Rho = A*Vp**B
-    return Rho
-
-def gardner_shale(Vp, A=1.66, B=0.261):
-    """
-    Vp in km/sec
-    """
-
-    Rho = A*Vp**B
-    return Rho
-
-def gardner_limestone(Vp, A=1.359, B=0.386):
+def gardner_shale(data, A=1.66, B=0.261, out='Rho'):
     """
     Vp in km/sec
+    Rho in g/cc
     """
+    
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
 
-    Rho = A*Vp**B
-    return Rho
-
-def gardner_dolomite(Vp, A=1.74, B=0.252):
-    """
-    Vp in km/sec
-    """
-
-    Rho = A*Vp**B
-    return Rho
-
-def gardner_anhydrite(Vp, A=2.19, B=0.16):
+def gardner_limestone(data, A=1.359, B=0.386, out='Rho'):
     """
     Vp in km/sec
+    Rho in g/cc
     """
 
-    Rho = A*Vp**B
-    return Rho
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
 
+def gardner_dolomite(data, A=1.74, B=0.252, out='Rho'):
+    """
+    Vp in km/sec
+    Rho in g/cc
+    """
+    
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
 
+def gardner_anhydrite(data, A=2.19, B=0.16, out='Rho'):
+    """
+    Vp in km/sec
+    Rho in g/cc
+    """
+
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
+
+def gardner(data, A, B, out='rho'):
+    """
+    Vp in km/sec
+    Rho in g/cc
+    """
+
+    if out.lower() == 'rho':
+        Rho = A*data**B
+        return Rho
+    elif out.lower() == 'vp':
+        Vp = ((data/1000)/A)**(1/B) * 1000
+        return Vp
 
 ###  DEPTH TREND MODELS
 
@@ -1494,7 +1845,7 @@ macbeth_coeffs = {'Cooper Basin Facies B': {'K_inf': 26.76,
                                           'phi_max': 5.5,
                                           'phi_mean': 4,
                                           'phi_min': 10},
-                 'Cooper Bassin Facies A': {'K_inf': 18.63,
+                 'Cooper Basin Facies A': {'K_inf': 18.63,
                                           'Mu_inf': 18.44,
                                           'P_K': 15.08,
                                           'P_Mu': 11.53,

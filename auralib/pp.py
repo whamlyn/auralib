@@ -11,6 +11,47 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def normalize_log1(data, mean_field, stdev_field, normmask=None):
+    """
+    Simple log normalization based on mean and standard deviation matching
+    """
+        
+    nanmask = np.isnan(data)
+    if normmask is not None:
+        normmask = normmask & ~nanmask
+    else:
+        normmask = ~nanmask
+        
+    mean_log = np.nanmean(data[normmask])
+    stdev_log = np.nanstd(data[normmask])    
+    
+    data_norm = (data - mean_log) * stdev_field/stdev_log + mean_field
+    
+    return data_norm
+
+
+def normalize_log2(data, p10_field, p90_field, p10_log=None, p90_log=None, normmask=None):
+    """
+    Simple log normalization based on percentile matching
+    """
+    
+    nanmask = np.isnan(data)
+    if normmask is not None:
+        normmask = normmask & ~nanmask
+    else:
+        normmask = ~nanmask
+    
+    if p10_log == None:
+        p10_log = np.quantile(data[normmask], 0.1)
+    
+    if p90_log == None:
+        p90_log = np.quantile(data[normmask], 0.9)
+    
+    data_norm = p10_field + ((p90_field-p10_field)/(p90_log-p10_log)*(data-p10_log))
+    
+    return data_norm
+
+
 def calc_Rw(Tc, Wse, verbose=False):
     """
     Tc = 60.0       # Temperature (Celcius)
@@ -27,7 +68,7 @@ def calc_Rw(Tc, Wse, verbose=False):
         print("T (C):     %10.2f" % (Tc))
         print("T (f):     %10.2f" % (Tf))
         print("Wse (ppm): %10.2f" % (Wse))
-        print("Rw (Ohm*m):%10.5f" % (Rw))
+        print("Rw (ohm*m):%10.5f" % (Rw))
 
     return Rw
 
@@ -67,7 +108,7 @@ def calc_Rw2(Tc, Wse, verbose=False):
         print("T (C):     %10.2f" % (Tc))
         print("T (f):     %10.2f" % (Tf))
         print("Wse (ppm): %10.2f" % (Wse))
-        print("Rw (Ohm*m):%10.5f" % (Rw))
+        print("Rw (ohm*m):%10.5f" % (Rw))
     
     return Rw
     
@@ -93,11 +134,7 @@ def sw_archie(res, phi, Rw, a=1.0, m=2.0, n=2.0):
     n = constant
     
     """
-    
-    Rw = float(Rw)
-    a = float(a)
-    m = float(m)
-    n = float(n)
+
     
     Sw = (a * Rw / (phi**m * res)) ** (1 / n)
     
@@ -107,16 +144,18 @@ def sw_archie(res, phi, Rw, a=1.0, m=2.0, n=2.0):
     return Sw
     
 
-def sw_simandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
+def sw_simandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
     """
-    Calculate water saturation using the Modified Simandoux equation
+    Calculate water saturation using the Simandoux equation. Note that the 
+    Archie constant n is held constant at 2.0 in order to make the equation
+    quadratic and, thus, simplifies the solution.
     
     res = measured formation resistivity (ohm*m)
     phi = effective porosity (v/v)
     vsh = shale volume (v/v)
     Rw = formation water resistivity (ohm*m)
     Rsh = shale resistivity (ohm*m)
-    a, m, n = Archie constants
+    a, m, n=2 = Archie constants
     """
     
     A = (phi**m) / (a*Rw)
@@ -124,16 +163,20 @@ def sw_simandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     C = -1/res
     
     Sw = np.where(res>0, (-B + np.sqrt(B**2.0 - 4.0*A*C))/(2*A), 1.0)
-    
+
     Sw[Sw < 0] = 0.0
     Sw[Sw > 1] = 1.0
     Sw[np.isnan(Sw)] = 1.0
     return Sw
 
 
-def sw_modsimandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
+def sw_modsimandoux_old(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     """
     Calculate water saturation using the Modified Simandoux equation
+    
+    Note: This function only supports n=2 and no x exponent in the B tern to 
+          account for dispersed clays. The below sw_modsimandoux() function is
+          equivalent to this function when n=2 and x=1.
     
     res = measured formation resistivity (ohm*m)
     phi = effective porosity (v/v)
@@ -143,9 +186,7 @@ def sw_modsimandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     a, m, n = Archie constants
     """
     
-    F = a / (phi**m)
-    
-    A = 1.0/(F*Rw)
+    A = (phi**m)/((1-Vsh)*a*Rw)
     B = Vsh/Rsh
     C = -1.0/res
     
@@ -156,8 +197,39 @@ def sw_modsimandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     Sw[np.isnan(Sw)] = 1.0
     return Sw
 
+def sw_modsimandoux(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0, x=1.0, niter=1000, alpha=0.01):
+    """
+    Calculate water saturation using the Modified Simandoux equation
+    
+    res = measured formation resistivity (ohm*m)
+    phi = effective porosity (v/v)
+    vsh = shale volume (v/v)
+    Rw = formation water resistivity (ohm*m)
+    Rsh = shale resistivity (ohm*m)
+    a, m, n = Archie constants
+    x = exponent to account for dispersed clays
+    niter = number of iterations to numerically solve for Sw
+    alpha = Sw update length scalar
+    """
+    
+    Sw_guess = sw_simandoux(res, phi, Vsh, Rw, Rsh)
 
-def sw_indonesia(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
+    diff = []
+    for i in range(0, niter):
+        Sw = ( a*Rw/(phi**m) * (1/res - x*Vsh/Rsh*Sw_guess))**(1/n)
+        mask = np.isnan(Sw)
+        Sw[mask] = 1.0
+        delta = Sw - Sw_guess
+        diff.append(np.nanmean(delta))
+        Sw_guess = Sw_guess + delta*alpha
+    
+    Sw[Sw < 0] = 0.0
+    Sw[Sw > 1] = 1.0
+    Sw[np.isnan(Sw)] = 1.0
+    return Sw
+
+
+def sw_indonesia(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0, n=2.0):
     """
     Calculate water saturation using the Indonesia equation
     
@@ -168,11 +240,15 @@ def sw_indonesia(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     Rsh = shale resistivity (ohm*m)
     a, m, n = Archie constants
     """
+    
+    
     A = (1.0/res)**0.5
     B = (Vsh**(1-0.5*Vsh)) / (Rsh**0.5)
     C = ((phi**m)/(a*Rw))**0.5
     
-    Sw = A / (B + C)
+    Sw = ( A / (B + C) ) ** 2/n
+    
+    #Sw_indo = ( ((1.0/res)**0.5) / ((Vsh**(1-0.5*Vsh)) / (Rsh**0.5) + ((phi**m)/(a*Rw))**0.5) ) ** 2/n
     
     Sw[Sw < 0] = 0.0
     Sw[Sw > 1] = 1.0
@@ -180,7 +256,36 @@ def sw_indonesia(res, phi, Vsh, Rw, Rsh, a=1.0, m=2.0):
     return Sw
 
 
-def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
+def sg_method1(nphi, phit, HIg=0.1, HIw=1.0):
+    """
+    Calculate gas saturation using neutron and total porosity logs
+
+    Parameters
+    ----------
+    nphi : ndarray or float
+        Neutron porosity (ensure correct matrix is used)
+    phit : ndarray or float
+        DESCRIPTION.
+    HIg : float, optional
+        Hydrogen index of gas. The default is 0.1
+    HIw : float, optional
+        Hydrogen index of water. The default is 1.0
+
+    Returns
+    -------
+    Sg : ndarray or float
+
+    """
+    mask = nphi > phit
+    
+    Sg = (HIw - nphi/phit)/(HIw - HIg)
+    Sg[Sg<0] = 0.0
+    Sg[Sg>1] = 1.0
+    Sg[mask] = 0
+    return Sg
+
+
+def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0, clip=True):
     """
     Calculate density porosity
         
@@ -202,12 +307,39 @@ def dens_por(Rlog, Rmatrix=2650.0, Rfluid=1000.0):
     
     phi = (Rlog - Rmatrix) / (Rfluid - Rmatrix)
     
-    phi[phi < 0.0] = 0.0
-    phi[phi > 1.0] = 1.0
+    if clip:
+        phi[phi < 0.0] = 0.0
+        phi[phi > 1.0] = 1.0
     
     return phi
 
 
+def sonic_por(Vp, Vp_matrix=6018.0, Vp_fluid=1500.0):
+    """
+    Calculate sonic porosity using Wyllie time-average equation.
+    
+    Usage:
+        phi = sonic_por(Vp, Vp_matrix=6018.0, Vp_fluid=1500.0)
+        
+    Inputs:
+        Vp = P-wave velocity log (m/s)
+        Vp_matrix = velocity of rock matrix (m/s); defaults to quartz velocity
+        Vp_fluid = velocity of pore fluid (m/s); defaults to brine
+    
+    Outputs:
+        phi = porosity (v/v)
+    """
+    
+    Vp = np.array(Vp)
+    
+    p_sonic = 1 / Vp
+    p_matrix = 1 / Vp_matrix
+    p_fluid = 1 / Vp_fluid
+    
+    phi = (p_sonic - p_matrix)/(p_fluid - p_matrix)
+    
+    return phi
+    
 
 def vsh_gr(gr, sand_line, shale_line):
     """
@@ -301,7 +433,28 @@ def vsh_clavier(gr, sand_line, shale_line):
     vsh_clavier[np.isnan(vsh_clavier)] = 1
         
     return vsh_clavier
+
+
+def vsh_ndsep(dpor, npor, sand_line=0.0, shale_line=0.25):
+    """
+    Calculate Vshale using neutron-density separation.
+    """
     
+    shale_line = float(shale_line)
+    sand_line = float(sand_line)
+    
+    ndsep = npor - dpor
+    mask = ndsep < 0.0
+    ndsep[mask] = 0.0
+    
+    vsh_ndsep = (ndsep - sand_line)/(shale_line - sand_line)
+    
+    # clip values to range 0 - 1
+    vsh_ndsep[vsh_ndsep > 1] = 1
+    vsh_ndsep[vsh_ndsep < 0] = 0
+    vsh_ndsep[np.isnan(vsh_ndsep)] = 1
+        
+    return vsh_ndsep
  
 def TOC_rho_vernik(rho, phi_k=0.1, phi_nk=0.038, rho_k=1.3, rho_nk=2.765, 
                    rho_hc=0.25, rho_w=1.05, Ck=80.0):
@@ -358,10 +511,14 @@ def TOC_passey(resis, sonic, LOM=10.0, resisBaseline=10.0, sonicBaseline=65.0,
     
     resistivity units: ohm*meters
     sonic units: ft/sec
+    TOC units: %
     """
     
     deltaLogR = np.log10(resis/resisBaseline) + scalingFactor*(sonic-sonicBaseline)
     TOC = deltaLogR * 10.0**(2.3 - 0.15*LOM)
+    
+    mask = TOC<0
+    TOC[mask] = 0.0
     
     return TOC
 

@@ -16,9 +16,6 @@ def petrel(direction='normal'):
     Returns the equivalent of the colormap named "Petrel" in RokDoc.
     """
     
-    import numpy as np
-    import matplotlib as mpl
-    
     n1 = 80
     r1 = np.linspace(255, 191, n1)
     g1 = np.linspace(255, 0, n1)
@@ -55,4 +52,30 @@ def petrel(direction='normal'):
         cmap = np.flipud(cmap)
         
     return ListedColormap(cmap, name='petrel')
+
+
+def sandshale(direction='normal'):
+    """
+    Returns the equivalent of the colormap named "Petrel" in RokDoc.
+    """
     
+    n1 = 30
+    r1 = np.linspace(255, 255, n1)
+    g1 = np.linspace(255, 255, n1)
+    b1 = np.linspace(0, 0, n1)
+    
+    n2 = 70
+    r2 = np.linspace(255, 0, n2)
+    g2 = np.linspace(255, 0, n2)
+    b2 = np.linspace(0, 0, n2)
+    
+    r = np.hstack([r1, r2])
+    g = np.hstack([g1, g2])
+    b = np.hstack([b1, b2])
+    cmap = np.vstack([r, g, b]).T / 255.0
+    
+    if direction == 'reverse':
+        cmap = np.flipud(cmap)
+        
+        
+    return ListedColormap(cmap, name='sandshale')
