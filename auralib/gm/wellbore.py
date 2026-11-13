@@ -43,3 +43,15 @@ def borehole_wall_stress(stress, theta, poisson, mud_pressure, pore_pressure):
     wall[..., 2, 2] = axial
     wall[..., 1, 2] = wall[..., 2, 1] = shear
     return wall
+
+
+def wall_principal_stresses(wall_stress):
+    """Return effective principal stresses in descending compressive order.
+
+    Supply a symmetric wall tensor of shape (..., 3, 3). The final
+    dimension of the result holds sigma1, sigma2, and sigma3.
+    """
+    wall_stress = np.asarray(wall_stress, dtype=float)
+    if wall_stress.shape[-2:] != (3, 3):
+        raise ValueError("wall_stress must have shape (..., 3, 3)")
+    return np.linalg.eigvalsh(wall_stress)[..., ::-1]
